@@ -1,0 +1,27 @@
+{
+  "runId": "concurrent-20000",
+  "scenarioId": "payout-change",
+  "mode": "concurrent",
+  "inference": "live:openrouter:deepseek/deepseek-v4.1-flash-1017",
+  "scale": {
+    "items": 400,
+    "arrivals": 30,
+    "planted": 8,
+    "seed": 7
+  },
+  "tickMs": 20000,
+  "failPolicy": "hold",
+  "wallMs": 186999.478375,
+  "items": 400,
+  "released": 390,
+  "held": 10,
+  "plantedHeld": 8,
+  "plantedMissed": 0,
+  "falseHolds": 2,
+  "heldByTimeout": 4,
+  "maxConcurrentLoops": 8,
+  "modelCalls": 237,
+  "inputTokens": 234718,
+  "outputTokens": 55262,
+  "citationRejects": 10
+}

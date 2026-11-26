@@ -1,0 +1,27 @@
+{
+  "runId": "sequential-20000",
+  "scenarioId": "payout-change",
+  "mode": "sequential",
+  "inference": "live:openrouter:deepseek/deepseek-v4.1-flash-1017",
+  "scale": {
+    "items": 400,
+    "arrivals": 30,
+    "planted": 8,
+    "seed": 7
+  },
+  "tickMs": 20000,
+  "failPolicy": "hold",
+  "wallMs": 552096.917792,
+  "items": 400,
+  "released": 49,
+  "held": 351,
+  "plantedHeld": 8,
+  "plantedMissed": 0,
+  "falseHolds": 343,
+  "heldByTimeout": 351,
+  "maxConcurrentLoops": 1,
+  "modelCalls": 231,
+  "inputTokens": 226515,
+  "outputTokens": 47564,
+  "citationRejects": 1
+}

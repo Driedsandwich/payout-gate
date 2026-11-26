@@ -1,0 +1,27 @@
+{
+  "runId": "concurrent-20000",
+  "scenarioId": "double-pledge",
+  "mode": "concurrent",
+  "inference": "live:openrouter:deepseek/deepseek-v4.1-flash-1017",
+  "scale": {
+    "items": 200,
+    "arrivals": 30,
+    "planted": 8,
+    "seed": 11
+  },
+  "tickMs": 20000,
+  "failPolicy": "hold",
+  "wallMs": 286267.608458,
+  "items": 200,
+  "released": 192,
+  "held": 8,
+  "plantedHeld": 8,
+  "plantedMissed": 0,
+  "falseHolds": 0,
+  "heldByTimeout": 6,
+  "maxConcurrentLoops": 8,
+  "modelCalls": 294,
+  "inputTokens": 997914,
+  "outputTokens": 96225,
+  "citationRejects": 24
+}

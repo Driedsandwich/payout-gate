@@ -1,0 +1,27 @@
+{
+  "runId": "sequential-20000",
+  "scenarioId": "double-pledge",
+  "mode": "sequential",
+  "inference": "live:openrouter:deepseek/deepseek-v4.1-flash-1017",
+  "scale": {
+    "items": 200,
+    "arrivals": 30,
+    "planted": 8,
+    "seed": 11
+  },
+  "tickMs": 20000,
+  "failPolicy": "hold",
+  "wallMs": 638891.223417,
+  "items": 200,
+  "released": 49,
+  "held": 151,
+  "plantedHeld": 8,
+  "plantedMissed": 0,
+  "falseHolds": 143,
+  "heldByTimeout": 151,
+  "maxConcurrentLoops": 1,
+  "modelCalls": 247,
+  "inputTokens": 531714,
+  "outputTokens": 82974,
+  "citationRejects": 23
+}

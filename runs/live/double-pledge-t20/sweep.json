@@ -1,0 +1,34 @@
+{
+  "rows": [
+    {
+      "mode": "concurrent",
+      "tickMs": 20000,
+      "released": 192,
+      "held": 8,
+      "plantedHeld": 8,
+      "plantedMissed": 0,
+      "falseHolds": 0,
+      "heldByTimeout": 6,
+      "confirmedLate": 6,
+      "clearedLate": 0,
+      "maxConcurrentLoops": 8,
+      "modelCalls": 294,
+      "wallMs": 286267.608458
+    },
+    {
+      "mode": "sequential",
+      "tickMs": 20000,
+      "released": 49,
+      "held": 151,
+      "plantedHeld": 8,
+      "plantedMissed": 0,
+      "falseHolds": 143,
+      "heldByTimeout": 151,
+      "confirmedLate": 8,
+      "clearedLate": 143,
+      "maxConcurrentLoops": 1,
+      "modelCalls": 247,
+      "wallMs": 638891.223417
+    }
+  ]
+}
