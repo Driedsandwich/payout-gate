@@ -1,0 +1,25 @@
+{
+  "name": "payout-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Concurrent Mozaik agents that hold a payout when its account changes mid-batch. Synthetic data only. Not financial advice.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "demo": "tsx src/cli.ts run --scenario payout-change --mode concurrent --inference scripted",
+    "demo:sequential": "tsx src/cli.ts run --scenario payout-change --mode sequential --inference scripted",
+    "live": "tsx src/cli.ts run --scenario payout-change --mode concurrent --inference live"
+  },
+  "dependencies": {
+    "@mozaik-ai/core": "6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
