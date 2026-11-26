@@ -1,8 +1,9 @@
 import { checkCitations, outputSources } from "../../core/citations.js";
+import { citedAmountDisplays } from "../../core/money.js";
 import type { TaskTarget, TaskToolContext } from "../../core/task.js";
 import type { SourceRef, ToolSpec, VerdictValue } from "../../core/types.js";
 import { findCreator, readRequest } from "./inbox.js";
-import { distinctSources, inspectPolicy, inspectRecords, ruleConstants } from "./rules.js";
+import { distinctSources, inspectPolicy, inspectRecords, payoutAmountSources, ruleConstants } from "./rules.js";
 
 type Args = Record<string, unknown>;
 const string = { type: "string" };
@@ -152,7 +153,7 @@ const submitVerdict = tool("submit_verdict", "Write this item's supported verdic
     if (!sources.length && value !== "unknown") throw new Error("A conclusive verdict needs sources");
     ctx.ledger.addVerdict({
       itemId, by: ctx.agent, value: value satisfies VerdictValue, reason: textArg(args, "reason"),
-      sources: distinctSources(sources), atMs: ctx.nowMs(),
+      sources: distinctSources([...sources, ...citedAmountDisplays(sources, ctx.toolSources)]), atMs: ctx.nowMs(),
     }, ctx.revision);
     return { recorded: true };
   });
@@ -162,9 +163,13 @@ const getHoldFacts = tool("get_hold_facts", "Read hold reasons and their sources
     const itemId = taskId(args, "itemId", ctx);
     const hold = ctx.ledger.holdFor(itemId);
     if (!hold) throw new Error(`No hold for ${itemId}`);
+    const item = ctx.ledger.item(itemId);
     return {
       itemId, reasons: hold.reasons,
-      sources: distinctSources([...hold.sources, ...ctx.ledger.item(itemId).sources, ...Object.values(ruleConstants)]),
+      sources: distinctSources([
+        ...hold.sources, ...item.sources.filter(({ field }) => field !== "amountCents"),
+        ...payoutAmountSources(item), ...Object.values(ruleConstants),
+      ]),
     };
   });
 

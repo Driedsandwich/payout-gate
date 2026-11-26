@@ -14,6 +14,8 @@
     "sweep": "tsx src/cli.ts sweep",
     "demo": "tsx src/cli.ts run --scenario payout-change --mode concurrent --inference scripted",
     "demo:sequential": "tsx src/cli.ts run --scenario payout-change --mode sequential --inference scripted",
+    "demo:pledge": "tsx src/cli.ts run --scenario double-pledge --mode concurrent --inference scripted --scale demo",
+    "demo:pledge:sequential": "tsx src/cli.ts run --scenario double-pledge --mode sequential --inference scripted --scale demo",
     "live": "tsx src/cli.ts run --scenario payout-change --mode concurrent --inference live",
     "mcp:start": "node --import tsx mcp/server.ts",
     "mcp:example": "node --import tsx mcp/example-client.ts",

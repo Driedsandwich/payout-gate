@@ -1,4 +1,5 @@
 import type { RequestLink } from "../../core/ledger.js";
+import { withAmountDisplay } from "../../core/money.js";
 import type { ScenarioData, SourceRef, WorkItem } from "../../core/types.js";
 
 type Row = ScenarioData["tables"][string][number];
@@ -27,6 +28,13 @@ export function rowSources(table: string, row: Row, fields = Object.keys(row)): 
 export function itemSource(item: WorkItem, field: keyof WorkItem, value: string | number): SourceRef {
   return item.sources.find((source) => source.field === field && source.value === value)
     ?? { source: item.sources[0]?.source ?? `data/batch.csv#${item.id}`, field, value };
+}
+
+export function payoutAmountSources(item: WorkItem): SourceRef[] {
+  const field = "amountCents";
+  const ref = item.sources.find((source) => source.field === field && source.value === item.amountCents)
+    ?? { source: `data/batch.csv#${item.id}`, field, value: item.amountCents };
+  return withAmountDisplay(ref, item.currency);
 }
 
 export function distinctSources(sources: SourceRef[]): SourceRef[] {
@@ -80,21 +88,23 @@ export function inspectPolicy(data: ScenarioData, item: WorkItem, requests: Requ
   const history = data.tables.history?.find(({ id }) => id === item.subjectId);
   const medianField = `median_payout_cents_${ruleConstants.medianWindowDays.value}d`;
   const median = history?.[medianField];
+  const amount = payoutAmountSources(item);
+  const historySources = history ? rowSources("history", history).flatMap((ref) => withAmountDisplay(ref, item.currency)) : [];
   const hits = [...records.masterHits, ...records.changeHits];
   if (history && typeof median === "number" && item.amountCents > ruleConstants.medianMultiple.value * median) {
     hits.push({
       rule: "amount_above_median",
       reason: "The payout exceeds the policy multiple of the creator’s historical median.",
-      sources: [itemSource(item, "amountCents", item.amountCents),
-        ...rowSources("history", history, [medianField]), ruleConstants.medianWindowDays, ruleConstants.medianMultiple],
+      sources: [...amount, ...rowSources("history", history, [medianField]).flatMap((ref) => withAmountDisplay(ref, item.currency)),
+        ruleConstants.medianWindowDays, ruleConstants.medianMultiple],
     });
   }
   return {
     hits, recent: records.recent.length > 0,
     complete: records.complete && typeof median === "number" && Number.isFinite(median),
     sources: distinctSources([
-      ...item.sources, ...records.masterSources, ...records.changeSources, ...records.requestSources,
-      ...(history ? rowSources("history", history) : []), ...Object.values(ruleConstants),
+      ...item.sources.filter(({ field }) => field !== "amountCents"), ...amount, ...historySources,
+      ...records.masterSources, ...records.changeSources, ...records.requestSources, ...Object.values(ruleConstants),
     ]),
   };
 }

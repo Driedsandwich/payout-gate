@@ -4,6 +4,7 @@ import type { SourceRef } from "./types.js";
 const date = /\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?/;
 const identifier = /\b(?!(?:EUR|USD)-)[A-Z][A-Z_]*-\d+\b(?![.,]\d)/;
 const numeric = /(?:[+-]?\p{Sc}?|\p{Sc}[+-]?)(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/u;
+const currencyPrefix = /^(?:EUR|USD)(?=[\t\p{Zs}]|[+-])/u;
 const word = String.raw`[\p{L}\p{M}\p{N}_]`;
 // Block both whole and partial matches inside words and dotted or hyphenated identifiers.
 const start = `(?:(?<!${word}|${word}[.-]|\\d,)|(?<=\\b(?:EUR|USD))(?=-))`;
@@ -45,9 +46,10 @@ function collectFacts(value: unknown, cited: Set<number | string>): void {
   if (typeof value === "number" && Number.isFinite(value)) cited.add(value);
   if (typeof value === "string") {
     const trimmed = value.trim();
-    const [match] = trimmed.matchAll(tokens);
-    if (!match || match[0] !== trimmed || match.groups?.id) return;
-    const key = factKey(trimmed, Boolean(match.groups?.date));
+    const scalar = trimmed.replace(currencyPrefix, "").trim();
+    const [match] = scalar.matchAll(tokens);
+    if (!match || match[0] !== scalar || match.groups?.id || (match.groups?.date && scalar !== trimmed)) return;
+    const key = factKey(scalar, Boolean(match.groups?.date));
     if (key !== undefined) cited.add(key);
   } else if (typeof value === "object" && value !== null) {
     for (const entry of Object.values(value)) collectFacts(entry, cited);

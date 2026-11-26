@@ -92,7 +92,10 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
       const unscanned = new Set(reviews.filter(({ needsAudit }) => needsAudit).map(({ chunkId }) => chunkId));
       const auditChunks = chunks.filter(({ id }) => unscanned.has(id));
       await runBatch([
-        ...[...unread].map((id) => () => triage(ledger.arrival(id))),
+        ...[...unread].map((arrivalId) => () => {
+          log.emit({ kind: "gate.retry_triage", agent: roles.intake, data: { arrivalId, attempt: 2 } });
+          return triage(ledger.arrival(arrivalId));
+        }),
         ...auditChunks.map((chunk) => () => scan(chunk)),
       ]);
       // Retried intake and audit can start checks for a new evidence revision.

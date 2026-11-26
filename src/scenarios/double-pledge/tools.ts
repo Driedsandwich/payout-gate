@@ -1,8 +1,9 @@
 import { checkCitations, outputSources } from "../../core/citations.js";
+import { citedAmountDisplays } from "../../core/money.js";
 import type { TaskTarget, TaskToolContext } from "../../core/task.js";
 import type { SourceRef, ToolSpec, WorkItem } from "../../core/types.js";
 import { fingerprintMessage, readPledgeMessage } from "./inbox.js";
-import { distinctSources, inspectDebtor, inspectRegistry, ruleConstants } from "./rules.js";
+import { distinctSources, fundingSources, inspectDebtor, inspectRegistry, ruleSources } from "./rules.js";
 
 type Args = Record<string, unknown>;
 const string = { type: "string" };
@@ -65,7 +66,7 @@ function fingerprintArgs(args: Args, ctx: TaskToolContext) {
 const fingerprintInvoice = tool("fingerprint_invoice", "Compare the message's invoice with funding requests, including held requests.",
   { arrivalId: string }, (args, ctx) => {
     const { kind, matches, lender, sources } = fingerprintArgs(args, ctx);
-    return { kind, matches, lender, sources: [...sources, ...Object.values(ruleConstants)] };
+    return { kind, matches, lender, sources: [...sources, ...ruleSources] };
   });
 
 const linkRequest = tool("link_request", "Link the message to its fingerprint-matched funding requests and start evidence checks.",
@@ -143,7 +144,7 @@ const submitVerdict = tool("submit_verdict", "Record the verdict supported by th
     if (!sources.length && value !== "unknown") throw new Error("A conclusive verdict needs sources");
     const reason = textArg(args, "reason");
     if (!checkCitations(reason, ctx.toolSources, ctx, ctx.emit)) return { recorded: false, sources };
-    const cited = distinctSources(sources);
+    const cited = distinctSources([...sources, ...citedAmountDisplays(sources, ctx.toolSources)]);
     ctx.ledger.addVerdict({ itemId, by: ctx.agent, value, reason, sources: cited, atMs: ctx.nowMs() }, ctx.revision);
     return { recorded: true, sources: cited };
   });
@@ -153,7 +154,7 @@ const getHoldFacts = tool("get_hold_facts", "Read the hold reasons and the row I
     const itemId = taskId(args, "itemId", ctx);
     const hold = ctx.ledger.holdFor(itemId);
     if (!hold) throw new Error(`No hold for ${itemId}`);
-    const sources = distinctSources([...hold.sources, ...Object.values(ruleConstants)]);
+    const sources = distinctSources([...hold.sources, ...fundingSources(ctx.data, ctx.ledger.item(itemId)), ...ruleSources]);
     const rows = [...new Set(sources.filter(({ field }) => field === "id").map(({ value }) => String(value)))];
     return { reasons: hold.reasons, rows, sources };
   });
@@ -162,7 +163,7 @@ const writeHoldNotice = tool("write_hold_notice", 'Write a cited funding hold no
   { itemId: string, text: string }, (args, ctx) => {
     const itemId = taskId(args, "itemId", ctx);
     const text = textArg(args, "text");
-    if (!checkCitations(text, ctx.toolSources, ctx, ctx.emit)) return { written: false };
+    if (!checkCitations(text, ctx.toolSources, ctx, ctx.emit, ctx.toolOutputs)) return { written: false };
     if (!text.includes("This is not financial advice")) throw new Error("The notice is missing the required statement");
     ctx.ledger.addNotice(itemId, text);
     return { written: true };

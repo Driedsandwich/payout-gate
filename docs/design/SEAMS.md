@@ -132,6 +132,7 @@ Same gate rules, same baseline rule.
 | `gate.pass` | released item ids | `{ chunkId }` | — |
 | `gate.hold` | held item ids | `{ chunkId, timeout: boolean, reasons: string[] }` | the rows behind the reasons |
 | `gate.unread` | — | `{ arrivalId }` | the unread arrival that named no creator |
+| `gate.retry_triage` | — | `{ arrivalId, attempt: 2 }` | — |
 | `hold.resolved` | `[itemId]` | `{ itemId, outcome: "confirmed" \| "cleared_late" }` | the rows supporting the outcome |
 | `hold.unresolved` | `[itemId]` | `{ itemId, reason }` | the rows supporting the cut-off hold |
 | `inference.completed` | — | `{ usage?: { input: number, output: number } }` (copied from Mozaik's token usage when present) | — |

@@ -100,10 +100,10 @@ afterEach(async () => {
   await rm(out, { recursive: true, force: true });
 });
 
-async function run(data: ScenarioData, timing: Partial<Pick<RunOptions, "mode" | "tickMs">> = {}) {
+async function run(data: ScenarioData, options: Partial<Pick<RunOptions, "mode" | "tickMs" | "pack">> = {}) {
   const result = await runScenario({
     runId: "pledge-pack-test", out, pack: doublePledgePack, data, mode: "concurrent",
-    inference: { kind: "scripted" }, tickMs: 600, failPolicy: "hold", maxLoops: 8, ...timing,
+    inference: { kind: "scripted" }, tickMs: 600, failPolicy: "hold", maxLoops: 8, ...options,
   });
   const events = (await readFile(result.eventsPath, "utf8")).trimEnd().split("\n")
     .map((line) => JSON.parse(line) as RunEvent);
@@ -126,6 +126,31 @@ function fundingCalls(events: RunEvent[]): string[][] {
 }
 
 describe("double-pledge pack", () => {
+  it("lets the Explainer quote sourced invoice and advance displays", async () => {
+    const data = fixture();
+    const item = data.items[1];
+    data.items = [item];
+    data.chunks = [{ ...data.chunks[0], itemIds: [item.id] }];
+    data.arrivals = [];
+    const notice = "The EUR 100.24 invoice was already pledged. The requested advance is EUR 80.00. This is not financial advice.";
+    const scripted = {
+      ...doublePledgePack.scripted,
+      next: (...args: Parameters<typeof doublePledgePack.scripted.next>) => {
+        const next = doublePledgePack.scripted.next(...args);
+        if ("call" in next && next.call.name === "write_hold_notice") next.call.args.text = notice;
+        return next;
+      },
+    };
+    const { ledger } = await run(data, { pack: { ...doublePledgePack, scripted } });
+    expect(ledger.holds).toEqual([expect.objectContaining({
+      itemId: item.id, notice,
+      sources: expect.arrayContaining([
+        { source: `${origin}#registry/RG-0001`, field: "amount_display", value: "EUR 100.24" },
+        { source: `${origin}#invoices/IV-00002`, field: "advance_display", value: "EUR 80.00" },
+      ]),
+    })]);
+  });
+
   it("links the altered submission and holds the cross-lender, registry, and missing-ledger requests with evidence", async () => {
     const { ledger, events } = await run(fixture());
     expect(ledger.holds.map(({ itemId }) => itemId)).toEqual(["FR-1", "FR-2", "FR-3"]);

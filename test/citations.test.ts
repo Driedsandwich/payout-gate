@@ -38,6 +38,19 @@ it("accepts standalone dates and numbers from nested JSON values in tool outputs
   expect(emit).not.toHaveBeenCalled();
 });
 
+it("accepts a tool's display amount or its numeric equivalent and rejects an invented number", () => {
+  const source = "scenario:double-pledge#invoices/IV-00001";
+  const outputs = [JSON.stringify({ sources: [
+    { source, field: "amount_cents", value: 1_309_460 },
+    { source, field: "amount_display", value: "EUR 13,094.60" },
+  ] })];
+  const emit = vi.fn();
+  expect(checkCitations("The invoice total is EUR 13,094.60 or 13094.6 in decimal form.", [], actor, emit, outputs)).toBe(true);
+  expect(emit).not.toHaveBeenCalled();
+  expect(checkCitations("The invoice total is 13095.6.", [], actor, emit, outputs)).toBe(false);
+  expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ data: expect.objectContaining({ numbers: ["13095.6"] }) }));
+});
+
 it("does not cite digits embedded in tool output keys or prose", () => {
   const outputs = [JSON.stringify({ "2025-02-20": "row", note: "The amount is 24." })];
   const emit = vi.fn();

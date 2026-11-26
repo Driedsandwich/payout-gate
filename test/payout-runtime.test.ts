@@ -150,18 +150,36 @@ describe("payout runtime", () => {
     expect(events.at(-1)?.kind).toBe("run.finished");
   });
 
-  it("retries incomplete intake and checks for a timeout hold", async () => {
-    const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 0.99);
-    const firstAttempt = new Set(["InboxWatcher", "RecordChecker"]);
+  it.each(["concurrent", "sequential"] as const)("retries incomplete intake and checks after cut-off in %s mode", async (mode) => {
+    const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 0.1);
+    let failedTriage = false;
+    let failedCheck = false;
     const scripted = {
       ...pack.scripted,
-      next: (...args: Parameters<typeof pack.scripted.next>) => firstAttempt.delete(args[0])
-        ? { answer: "Try again later." } : pack.scripted.next(...args),
+      next: (...args: Parameters<typeof pack.scripted.next>) => {
+        if (args[0] === "InboxWatcher" && !failedTriage && args[2].some(({ name }) => name === "read_arrival")) {
+          failedTriage = true;
+          return { answer: "Try again later." };
+        }
+        if (args[0] === "RecordChecker" && !failedCheck) {
+          failedCheck = true;
+          return { answer: "Try again later." };
+        }
+        return pack.scripted.next(...args);
+      },
     };
-    const { events, ledger } = await run({ data, pack: { ...pack, scripted } });
-    const starts = events.filter(({ kind }) => kind === "message_received.started").map(({ agent }) => agent);
-    expect(starts.filter((agent) => agent === "InboxWatcher")).toHaveLength(2);
-    expect(starts.filter((agent) => agent === "RecordChecker")).toHaveLength(2);
+    const { events, ledger } = await run({ data, mode, pack: { ...pack, scripted } });
+    const hold = events.find(({ kind }) => kind === "gate.hold")!;
+    const retries = events.filter(({ kind }) => kind === "gate.retry_triage");
+    expect(retries).toEqual([expect.objectContaining({ agent: "InboxWatcher", data: { arrivalId: "IN-0010", attempt: 2 } })]);
+    expect(hold.seq).toBeLessThan(retries[0].seq);
+    const reads = events.filter(({ kind, agent, data }) => kind === "function_call.started" && agent === "InboxWatcher" &&
+      (data?.payload as { call?: { name: string } })?.call?.name === "read_arrival");
+    expect(reads).toHaveLength(2);
+    expect(reads[0].seq).toBeLessThan(hold.seq);
+    expect(reads[1].seq).toBeGreaterThan(retries[0].seq);
+    expect(reads[1].loopId).not.toBe(reads[0].loopId);
+    expect(events.filter(({ kind, agent }) => kind === "message_received.started" && agent === "RecordChecker")).toHaveLength(2);
     expect(ledger.holds[0]).toMatchObject({ outcome: "confirmed", notice: expect.stringContaining("IN-0010") });
     expect(events.some(({ kind }) => kind === "hold.unresolved")).toBe(false);
   });
@@ -431,10 +449,10 @@ describe("payout runtime", () => {
     expect(raw).not.toContain("sk-test-");
   });
 
-  it("writes a notice citing the timestamp and rule constants returned by the hold facts tool", async () => {
+  it("writes a notice citing the display amounts, timestamp, and rule constants returned by the hold facts tool", async () => {
     const notice = [
       "1) The account changed on 2026-11-26 09:00 (2026-11-26T09:00:00Z), within 72 hours of the batch.",
-      "2. The payout exceeds 3x the 90-day median.",
+      "2. The payout of EUR 13,094.60 exceeds 3x the 90-day median of EUR 40.00.",
       "This is not financial advice.",
     ].join("\n");
     const scripted = {
@@ -446,13 +464,17 @@ describe("payout runtime", () => {
       },
     };
     const data = oneChunk();
-    data.items[0] = { ...payoutMini().items[1], amountCents: 16_000 };
+    data.items[0] = { ...payoutMini().items[1], amountCents: 1_309_460 };
     data.chunks[0].itemIds = [data.items[0].id];
     const { events, ledger } = await run({ data, pack: { ...pack, scripted } });
     expect(events.filter(({ kind }) => kind === "citation.reject")).toEqual([]);
     expect(ledger.holds[0]).toMatchObject({
       notice,
-      sources: expect.arrayContaining(Object.values(ruleConstants)),
+      sources: expect.arrayContaining([
+        ...Object.values(ruleConstants),
+        { source: "data/batch.csv#PO-00002", field: "amount_display", value: "EUR 13,094.60" },
+        { source: "data/history.csv#CR-0002", field: "median_payout_90d_display", value: "EUR 40.00" },
+      ]),
     });
   });
 
@@ -487,7 +509,7 @@ describe("payout runtime", () => {
   it("rejects the invented amount, stops the Explainer at three writes, and records a fallback", async () => {
     const write = vi.fn(() => ({
       call: { name: "write_hold_notice", args: {
-        itemId: "PO-00001", text: "The unsupported amount is 987,654. This is not financial advice.",
+        itemId: "PO-00001", text: "The unsupported amount is 987654. This is not financial advice.",
       } },
     }));
     const scripted = {
@@ -504,7 +526,7 @@ describe("payout runtime", () => {
     const rejections = events.filter(({ kind }) => kind === "citation.reject");
     expect(rejections).toHaveLength(3);
     for (const rejection of rejections) {
-      expect(rejection).toMatchObject({ agent: "Explainer", loopId: expect.any(String), data: { numbers: ["987,654"] } });
+      expect(rejection).toMatchObject({ agent: "Explainer", loopId: expect.any(String), data: { numbers: ["987654"] } });
     }
     expect(events.filter(({ kind }) => kind === "citation.fallback")).toEqual([
       expect.objectContaining({ itemIds: ["PO-00001"], data: { itemId: "PO-00001", attempts: 3 } }),
@@ -512,7 +534,7 @@ describe("payout runtime", () => {
     const hold = ledger.holds[0];
     expect(hold.notice).toContain(hold.reasons[0]);
     expect(hold.notice).toContain("data/master.csv#CR-0001");
-    expect(hold.notice).not.toContain("987,654");
+    expect(hold.notice).not.toContain("987654");
     expect(events.at(-1)?.kind).toBe("run.finished");
   });
 });

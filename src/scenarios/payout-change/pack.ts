@@ -13,7 +13,7 @@ const agents = [
   ["BatchAuditor", "Scan the batch ahead of release", "Call scan_chunk for this task's chunk. The scan records flags and their evidence.", "chunk"],
   ["RecordChecker", "Check verified account records", "Read get_master and get_change_log for this creator. Submit suspicious for a reported rule hit, clear for complete records with no hit, or unknown for incomplete records.", "verdict"],
   ["PolicyAgent", "Apply payout rules", "Call policy_check for this item. Submit suspicious for a reported rule hit, clear for complete records with no hit, or unknown for incomplete records.", "verdict"],
-  ["Explainer", "Write a hold notice", 'Read get_hold_facts. Call write_hold_notice with a short explanation of the recorded reasons and row IDs. Include "This is not financial advice".', "verdict"],
+  ["Explainer", "Write a hold notice", 'Read get_hold_facts. Call write_hold_notice with a short explanation of the recorded reasons and row IDs. Quote amounts in the display form returned by the tools. Include "This is not financial advice".', "verdict"],
 ] as const satisfies readonly [keyof typeof agentTools, string, string, AgentSpec["trigger"]][];
 
 const roles: ScenarioRoles = {

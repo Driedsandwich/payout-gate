@@ -14,7 +14,7 @@ const agents = [
   ["Fingerprinter", "Audit upcoming funding requests", "Call scan_chunk for this task's chunk. The scan flags requests that need checker verdicts.", "chunk"],
   ["RegistryChecker", "Check pledges and request fingerprints", "Call lookup_registry for the task's item. Submit suspicious for a reported hit, clear for complete records with no hit, or unknown for incomplete records.", "verdict"],
   ["DebtorChecker", "Check the debtor's open ledger", "Call lookup_debtor_ledger for the task's item. Submit suspicious for a reported hit, clear for complete records with no hit, or unknown for incomplete records.", "verdict"],
-  ["Explainer", "Write a funding hold notice", 'Read get_hold_facts. Write a short notice with the reasons and cited row IDs. Include "This is not financial advice".', "verdict"],
+  ["Explainer", "Write a funding hold notice", 'Read get_hold_facts. Write a short notice with the reasons and cited row IDs. Quote amounts in the display form returned by the tools. Include "This is not financial advice".', "verdict"],
 ] as const satisfies readonly [keyof typeof agentTools, string, string, AgentSpec["trigger"]][];
 
 const roles: ScenarioRoles = {

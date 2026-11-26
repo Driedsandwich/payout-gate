@@ -1,3 +1,4 @@
+import { withAmountDisplay } from "../../core/money.js";
 import type { ScenarioData, SourceRef, WorkItem } from "../../core/types.js";
 
 export type Row = ScenarioData["tables"][string][number];
@@ -39,8 +40,10 @@ const dayMs = 86_400_000;
 
 export const ruleConstants = {
   issueDateToleranceDays: { source: "policy:double-pledge#issue_date_tolerance_days", value: 1 },
-  amountRoundingCents: { source: "policy:double-pledge#amount_rounding_cents", value: 100 },
+  amountRoundingCents: { source: "policy:double-pledge#amount_rounding_cents", field: "amount_rounding_cents", value: 100 },
 } as const satisfies Record<string, SourceRef>;
+
+export const ruleSources = [ruleConstants.issueDateToleranceDays, ...withAmountDisplay(ruleConstants.amountRoundingCents)];
 
 export function distinctSources(sources: SourceRef[]): SourceRef[] {
   return [...new Map(sources.map((ref) => [JSON.stringify([ref.source, ref.field, ref.value]), ref])).values()];
@@ -50,8 +53,9 @@ export function rowSources(data: ScenarioData, table: Table, row: Row, fields = 
   const origin = data.items[0]?.sources.find(({ source }) => source.includes("#invoices/"))?.source.split("#")[0]
     ?? "scenario:double-pledge";
   const source = `${origin}#${table}/${row.id}`;
+  const currency = typeof row.currency === "string" ? row.currency : undefined;
   return [...new Set(["id", ...fields])].flatMap((field) =>
-    row[field] === undefined ? [] : [{ source, field, value: row[field] }]);
+    row[field] === undefined ? [] : withAmountDisplay({ source, field, value: row[field] }, currency));
 }
 
 export function normalizeInvoiceNumber(value: string): string {
@@ -138,6 +142,12 @@ function invoiceSources(data: ScenarioData, row?: Row): SourceRef[] {
   ]) : [];
 }
 
+export function fundingSources(data: ScenarioData, item: WorkItem, row = invoiceRow(data, item)): SourceRef[] {
+  return distinctSources([
+    ...item.sources.flatMap((ref) => withAmountDisplay(ref, item.currency)), ...invoiceSources(data, row),
+  ]);
+}
+
 export interface LinkedSubmission {
   invoice: Submission;
   sources: SourceRef[];
@@ -147,7 +157,7 @@ export interface LinkedSubmission {
 export function inspectRegistry(data: ScenarioData, item: WorkItem, incoming: LinkedSubmission[]): Facts {
   const row = invoiceRow(data, item);
   const invoice = row && submission(row);
-  const base = distinctSources([...item.sources, ...invoiceSources(data, row), ...Object.values(ruleConstants)]);
+  const base = distinctSources([...fundingSources(data, item, row), ...ruleSources]);
   const cutoff = runStart(data);
   if (!row || !invoice) return { hits: [], complete: false, sources: base };
 
@@ -215,7 +225,7 @@ export function inspectRegistry(data: ScenarioData, item: WorkItem, incoming: Li
 export function inspectDebtor(data: ScenarioData, item: WorkItem): Facts {
   const row = invoiceRow(data, item);
   const invoice = row && identity(row);
-  const base = distinctSources([...item.sources, ...invoiceSources(data, row)]);
+  const base = fundingSources(data, item, row);
   const ledger = data.tables.debtor_ledger;
   if (!invoice || !ledger) return { hits: [], complete: false, sources: base };
 

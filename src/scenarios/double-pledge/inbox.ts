@@ -1,3 +1,4 @@
+import { withAmountDisplay } from "../../core/money.js";
 import type { Arrival, ScenarioData, SourceRef, WorkItem } from "../../core/types.js";
 import {
   distinctSources, invoiceRow, matchesFingerprint, receivable, rowSources, submission,
@@ -20,7 +21,8 @@ function party(data: ScenarioData, table: "sellers" | "debtors", text: string | 
 
 export function readPledgeMessage(data: ScenarioData, { id, body, sources }: Arrival): Message {
   body = body.trim();
-  const evidence = distinctSources([...sources, { source: `scenario:double-pledge#arrivals/${id}`, field: "id", value: id }]);
+  const source = `scenario:double-pledge#arrivals/${id}`;
+  const evidence = distinctSources([...sources, { source, field: "id", value: id }]);
   const submissionHeader = body.match(/^To (LENDER-[\w-]+) intake\s*:/im);
   const registryHeader = /^Registry notice\b/i.test(body);
   const debtorHeader = /\bchecked its accounts payable ledger\b/i.test(body);
@@ -53,6 +55,10 @@ export function readPledgeMessage(data: ScenarioData, { id, body, sources }: Arr
       advance_cents: advance?.[2].toUpperCase() === fields.currency ? Number(advance?.[1]) : NaN,
     });
     if (!invoice) return incomplete;
+    evidence.push(
+      ...withAmountDisplay({ source, field: "amount_cents", value: invoice.amount_cents }, invoice.currency),
+      ...withAmountDisplay({ source, field: "advance_cents", value: invoice.advance_cents }, invoice.currency),
+    );
 
     const matchingRows = data.tables.invoices?.filter((row) =>
       Object.entries(invoice).every(([field, value]) => row[field] === value));
@@ -63,6 +69,7 @@ export function readPledgeMessage(data: ScenarioData, { id, body, sources }: Arr
 
   const invoice = receivable(fields);
   if (!invoice) return incomplete;
+  evidence.push(...withAmountDisplay({ source, field: "amount_cents", value: invoice.amount_cents }, invoice.currency));
   if (registry) {
     const lender = registry[2].toUpperCase();
     const row = data.tables.registry?.find((row) => row.id === registry[1] && row.lender === lender

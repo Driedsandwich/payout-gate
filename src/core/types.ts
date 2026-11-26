@@ -40,6 +40,7 @@ export type RunEventKind =
   | "gate.pass"          // the gate let a gated tool call run
   | "gate.hold"          // the gate rewrote a gated tool call into a hold notice
   | "gate.unread"        // a message was unread at the cut-off and named no subject
+  | "gate.retry_triage"  // late review retries an unread arrival tied to a timeout hold
   | "hold.resolved"      // late review confirmed the hold or cleared the item for late payment
   | "hold.unresolved"    // late review could not complete, with the reason recorded
   | "citation.reject"    // an agent text contained an unsupported numeric fact
