@@ -2,7 +2,7 @@ import { checkCitations, outputSources } from "../../core/citations.js";
 import type { TaskTarget, TaskToolContext } from "../../core/task.js";
 import type { SourceRef, ToolSpec, WorkItem } from "../../core/types.js";
 import { fingerprintMessage, readPledgeMessage } from "./inbox.js";
-import { distinctSources, inspectDebtor, inspectRegistry } from "./rules.js";
+import { distinctSources, inspectDebtor, inspectRegistry, ruleConstants } from "./rules.js";
 
 type Args = Record<string, unknown>;
 const string = { type: "string" };
@@ -65,7 +65,7 @@ function fingerprintArgs(args: Args, ctx: TaskToolContext) {
 const fingerprintInvoice = tool("fingerprint_invoice", "Compare the message's invoice with pending requests.",
   { arrivalId: string }, (args, ctx) => {
     const { kind, matches, lender, sources } = fingerprintArgs(args, ctx);
-    return { kind, matches, lender, sources };
+    return { kind, matches, lender, sources: [...sources, ...Object.values(ruleConstants)] };
   });
 
 const linkRequest = tool("link_request", "Link the delivered message to its fingerprint-matched pending requests.",
@@ -153,7 +153,7 @@ const getHoldFacts = tool("get_hold_facts", "Read the hold reasons and the row I
     const itemId = taskId(args, "itemId", ctx);
     const hold = ctx.ledger.holdFor(itemId);
     if (!hold) throw new Error(`No hold for ${itemId}`);
-    const sources = distinctSources(hold.sources);
+    const sources = distinctSources([...hold.sources, ...Object.values(ruleConstants)]);
     const rows = [...new Set(sources.filter(({ field }) => field === "id").map(({ value }) => String(value)))];
     return { reasons: hold.reasons, rows, sources };
   });

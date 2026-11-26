@@ -1,8 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import { makeScrubber } from "../../core/eventlog.js";
 import { runScenario } from "../../core/orchestrator.js";
+import { resolveOutputPath } from "../../core/repository.js";
 import type { RunEvent } from "../../core/types.js";
 import { evaluate } from "../../eval/evaluate.js";
 import { SCALES } from "./generate.js";
@@ -26,7 +27,7 @@ async function main(): Promise<void> {
   }
   if (!values.out?.trim()) throw new Error("--out is required");
 
-  const out = resolve(values.out);
+  const out = resolveOutputPath(values.out);
   const runId = basename(out);
   const data = doublePledgePack.generate(SCALES[scale]);
   const { eventsPath } = await runScenario({

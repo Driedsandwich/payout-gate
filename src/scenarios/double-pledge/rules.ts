@@ -37,6 +37,11 @@ type PledgeData = ScenarioData & { runStartedAt?: string };
 const generatedRunStart = "2026-11-26T09:00:00.000Z";
 const dayMs = 86_400_000;
 
+export const ruleConstants = {
+  issueDateToleranceDays: { source: "policy:double-pledge#issue_date_tolerance_days", value: 1 },
+  amountRoundingCents: { source: "policy:double-pledge#amount_rounding_cents", value: 100 },
+} as const satisfies Record<string, SourceRef>;
+
 export function distinctSources(sources: SourceRef[]): SourceRef[] {
   return [...new Map(sources.map((ref) => [JSON.stringify([ref.source, ref.field, ref.value]), ref])).values()];
 }
@@ -64,9 +69,11 @@ function dateDay(value: string): number {
 
 export function matchesFingerprint(left: Receivable, right: Receivable): boolean {
   const key = invoiceKey(left);
+  const rounding = ruleConstants.amountRoundingCents.value;
   return Boolean(key && key === invoiceKey(right)
-    && Math.round(left.amount_cents / 100) === Math.round(right.amount_cents / 100)
-    && (!left.issue_date || !right.issue_date || Math.abs(dateDay(left.issue_date) - dateDay(right.issue_date)) <= 1));
+    && Math.round(left.amount_cents / rounding) === Math.round(right.amount_cents / rounding)
+    && (!left.issue_date || !right.issue_date
+      || Math.abs(dateDay(left.issue_date) - dateDay(right.issue_date)) <= ruleConstants.issueDateToleranceDays.value));
 }
 
 function identity(row: Row): InvoiceIdentity | undefined {
@@ -140,7 +147,7 @@ export interface LinkedSubmission {
 export function inspectRegistry(data: ScenarioData, item: WorkItem, incoming: LinkedSubmission[]): Facts {
   const row = invoiceRow(data, item);
   const invoice = row && submission(row);
-  const base = distinctSources([...item.sources, ...invoiceSources(data, row)]);
+  const base = distinctSources([...item.sources, ...invoiceSources(data, row), ...Object.values(ruleConstants)]);
   const cutoff = runStart(data);
   if (!row || !invoice) return { hits: [], complete: false, sources: base };
 

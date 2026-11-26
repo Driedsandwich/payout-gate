@@ -68,7 +68,10 @@ export const scripted: ScriptedPolicy = {
         if (outputs.has("write_hold_notice")) break;
         if (!outputs.has("get_hold_facts")) return nextCall("get_hold_facts", { itemId });
         const { reasons, sources } = read<{ reasons: string[]; sources: SourceRef[] }>("get_hold_facts");
-        const rows = [...new Set(sources.flatMap(({ source }) => source.includes("#") ? [source.split("#").at(-1)!] : []))];
+        const rows = [...new Set(sources.flatMap(({ source }) => {
+          const [, row] = source.split("#");
+          return row && !source.startsWith("policy:") ? [row] : [];
+        }))];
         const evidence = rows.length ? ` Source rows: ${rows.join(", ")}.` : "";
         return nextCall("write_hold_notice", {
           itemId, text: `Your payout is on hold. ${reasons.join(" ")}${evidence} This is not financial advice.`,

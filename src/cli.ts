@@ -1,16 +1,22 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
 import { makeScrubber } from "./core/eventlog.js";
 import { runScenario, type RunOptions } from "./core/orchestrator.js";
+import { resolveOutputPath } from "./core/repository.js";
 import type { RunEvent, RunSummary, ScenarioData, ScenarioPack, Scale } from "./core/types.js";
 import { countHoldOutcomes } from "./eval/hold-outcomes.js";
+import { SCALES as pledgeScales } from "./scenarios/double-pledge/generate.js";
+import { doublePledgePack } from "./scenarios/double-pledge/pack.js";
 import { payoutChangePack } from "./scenarios/payout-change/pack.js";
 
+const scenarios = ["payout-change", "double-pledge"] as const;
 const scales = ["demo", "full", "mini"] as const;
 const modes = ["concurrent", "sequential"] as const;
+const pledgeMiniScale: Scale = { items: 12, arrivals: 4, planted: 2, seed: 1 };
 const scriptedNote = "Scripted latency is simulated; these numbers show the mechanism, not performance.";
+type ScenarioId = typeof scenarios[number];
 type ScaleName = typeof scales[number];
 type GeneratorModule = { generate: ScenarioPack["generate"]; SCALES: Record<Exclude<ScaleName, "mini">, Scale> };
 type EvaluatorModule = { evaluate(events: RunEvent[], data: ScenarioData): RunSummary | Promise<RunSummary> };
@@ -37,7 +43,7 @@ function positiveInteger(value: string, flag: string): number {
   return number;
 }
 
-async function loadScale(scaleName: ScaleName) {
+async function loadPayoutScale(scaleName: ScaleName) {
   if (scaleName !== "mini") {
     const generator = await optionalModule<GeneratorModule>("./scenarios/payout-change/generate");
     if (generator) return { generate: generator.generate, scale: generator.SCALES[scaleName] };
@@ -46,6 +52,14 @@ async function loadScale(scaleName: ScaleName) {
   }
   const { MINI_SCALE, payoutMini } = await import("../test/fixtures/payout-mini.js");
   return { generate: payoutMini, scale: MINI_SCALE };
+}
+
+async function loadScenario(scenarioId: ScenarioId, scaleName: ScaleName) {
+  if (scenarioId === "double-pledge") {
+    return { pack: doublePledgePack, scale: scaleName === "mini" ? pledgeMiniScale : pledgeScales[scaleName] };
+  }
+  const { generate, scale } = await loadPayoutScale(scaleName);
+  return { pack: payoutChangePack(generate), scale };
 }
 
 async function evaluateRun(evaluator: EvaluatorModule, eventsPath: string, data: ScenarioData, out: string) {
@@ -108,7 +122,7 @@ async function main(): Promise<void> {
   if (positionals.length !== 1 || (command !== "run" && command !== "sweep")) {
     throw new Error("Expected the run or sweep command");
   }
-  const scenarioId = choice(values.scenario, ["payout-change"] as const, "scenario");
+  const scenarioId = choice(values.scenario, scenarios, "scenario");
   const kind = choice(values.inference, ["scripted", "live"] as const, "inference");
   const provider = values.provider && choice(values.provider, ["openrouter", "anthropic", "openai"] as const, "provider");
   const model = values.model?.trim();
@@ -118,8 +132,7 @@ async function main(): Promise<void> {
   const maxLoops = positiveInteger(values["max-loops"], "max-loops");
   const failPolicy = choice(values["fail-policy"], ["hold", "release"] as const, "fail-policy");
 
-  const { generate, scale } = await loadScale(scaleName);
-  const pack = payoutChangePack(generate);
+  const { pack, scale } = await loadScenario(scenarioId, scaleName);
   const data = pack.generate(scale);
   const options = { pack, data, inference, failPolicy, maxLoops };
   const minute = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "");
@@ -129,7 +142,7 @@ async function main(): Promise<void> {
     const ticks = values.ticks.split(",").map((tick) => positiveInteger(tick.trim(), "ticks"));
     if (new Set(ticks).size !== ticks.length) throw new Error("Sweep tick lengths must be distinct");
     if (!evaluator) throw new Error("Sweep requires src/eval/evaluate.ts");
-    const out = resolve(values.out ?? join("runs", `${scenarioId}-sweep-${kind}-${minute}`));
+    const out = resolveOutputPath(values.out ?? join("runs", `${scenarioId}-sweep-${kind}-${minute}`));
     await sweep(out, ticks, options, evaluator);
     return;
   }
@@ -137,7 +150,7 @@ async function main(): Promise<void> {
   const mode = choice(values.mode, modes, "mode");
   const tickMs = positiveInteger(values["tick-ms"] ?? (kind === "scripted" ? "1500" : "20000"), "tick-ms");
   const defaultId = `${scenarioId}-${mode}-${kind}-${minute}`;
-  const out = resolve(values.out ?? join("runs", defaultId));
+  const out = resolveOutputPath(values.out ?? join("runs", defaultId));
   const runId = basename(out);
   const result = await runScenario({ ...options, runId, out, mode, tickMs });
 

@@ -6,6 +6,12 @@ type Row = ScenarioData["tables"][string][number];
 type DatedScenario = ScenarioData & { batchAt?: string };
 export const DEFAULT_BATCH_AT = "2026-11-27T12:00:00.000Z";
 
+export const ruleConstants = {
+  medianWindowDays: { source: "policy:payout-change#median_window_days", field: "median_window_days", value: 90 },
+  recentChangeHours: { source: "policy:payout-change#recent_change_hours", field: "recent_change_hours", value: 72 },
+  medianMultiple: { source: "policy:payout-change#median_multiple", field: "median_multiple", value: 3 },
+} as const satisfies Record<string, SourceRef>;
+
 export interface RuleHit {
   rule: string;
   reason: string;
@@ -33,7 +39,7 @@ export function inspectRecords(data: DatedScenario, item: WorkItem, requests: Re
   const batchAt = Date.parse(data.batchAt ?? DEFAULT_BATCH_AT);
   const recent = changes.filter(({ at }) => {
     const age = batchAt - Date.parse(String(at));
-    return age >= 0 && age <= 72 * 60 * 60 * 1_000;
+    return age >= 0 && age <= ruleConstants.recentChangeHours.value * 60 * 60 * 1_000;
   });
   const masterSources = master ? rowSources("master", master) : [];
   const changeSources = changes.flatMap((row) => rowSources("change_log", row));
@@ -61,7 +67,7 @@ export function inspectRecords(data: DatedScenario, item: WorkItem, requests: Re
     .map((row) => ({
       rule: "unverified_recent_change",
       reason: "A recent account change came from a new device or lacked in-app verification.",
-      sources: rowSources("change_log", row, ["at", "device", "channel", "new_account_ref"]),
+      sources: [...rowSources("change_log", row, ["at", "device", "channel", "new_account_ref"]), ruleConstants.recentChangeHours],
     }));
   return {
     master, changes, recent, masterHits, changeHits, masterSources, changeSources, requestSources,
@@ -72,14 +78,15 @@ export function inspectRecords(data: DatedScenario, item: WorkItem, requests: Re
 export function inspectPolicy(data: ScenarioData, item: WorkItem, requests: RequestLink[]) {
   const records = inspectRecords(data, item, requests);
   const history = data.tables.history?.find(({ id }) => id === item.subjectId);
-  const median = history?.median_payout_cents_90d;
+  const medianField = `median_payout_cents_${ruleConstants.medianWindowDays.value}d`;
+  const median = history?.[medianField];
   const hits = [...records.masterHits, ...records.changeHits];
-  if (history && typeof median === "number" && item.amountCents > 3 * median) {
+  if (history && typeof median === "number" && item.amountCents > ruleConstants.medianMultiple.value * median) {
     hits.push({
       rule: "amount_above_median",
       reason: "The payout exceeds the policy multiple of the creator’s historical median.",
       sources: [itemSource(item, "amountCents", item.amountCents),
-        ...rowSources("history", history, ["median_payout_cents_90d"])],
+        ...rowSources("history", history, [medianField]), ruleConstants.medianWindowDays, ruleConstants.medianMultiple],
     });
   }
   return {
@@ -87,7 +94,7 @@ export function inspectPolicy(data: ScenarioData, item: WorkItem, requests: Requ
     complete: records.complete && typeof median === "number" && Number.isFinite(median),
     sources: distinctSources([
       ...item.sources, ...records.masterSources, ...records.changeSources, ...records.requestSources,
-      ...(history ? rowSources("history", history) : []),
+      ...(history ? rowSources("history", history) : []), ...Object.values(ruleConstants),
     ]),
   };
 }

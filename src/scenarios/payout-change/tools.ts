@@ -2,7 +2,7 @@ import { checkCitations, outputSources } from "../../core/citations.js";
 import type { TaskTarget, TaskToolContext } from "../../core/task.js";
 import type { SourceRef, ToolSpec, VerdictValue } from "../../core/types.js";
 import { findCreator, readRequest } from "./inbox.js";
-import { distinctSources, inspectPolicy, inspectRecords } from "./rules.js";
+import { distinctSources, inspectPolicy, inspectRecords, ruleConstants } from "./rules.js";
 
 type Args = Record<string, unknown>;
 const string = { type: "string" };
@@ -123,7 +123,7 @@ const getMaster = tool("get_master", "Read the creator's verified account and co
 const getChangeLog = tool("get_change_log", "Read the creator's change log and recent verification issues.",
   { creatorId: string }, (args, ctx) => {
     const { changes, changeHits, changeSources, complete } = taskRecords(args, ctx);
-    return { changes, hits: changeHits, complete, sources: changeSources };
+    return { changes, hits: changeHits, complete, sources: [...changeSources, ruleConstants.recentChangeHours] };
   });
 
 const policyCheck = tool("policy_check", "Compute the payout rules from the batch, records, and linked requests.",
@@ -162,7 +162,10 @@ const getHoldFacts = tool("get_hold_facts", "Read hold reasons and their sources
     const itemId = taskId(args, "itemId", ctx);
     const hold = ctx.ledger.holdFor(itemId);
     if (!hold) throw new Error(`No hold for ${itemId}`);
-    return { itemId, reasons: hold.reasons, sources: distinctSources([...hold.sources, ...ctx.ledger.item(itemId).sources]) };
+    return {
+      itemId, reasons: hold.reasons,
+      sources: distinctSources([...hold.sources, ...ctx.ledger.item(itemId).sources, ...Object.values(ruleConstants)]),
+    };
   });
 
 const writeHoldNotice = tool("write_hold_notice", 'Write the cited notice including "This is not financial advice".',

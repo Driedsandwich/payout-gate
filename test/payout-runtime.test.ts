@@ -9,7 +9,7 @@ import { createLoopRuntime } from "../src/core/loop-runtime.js";
 import { runScenario, type RunOptions } from "../src/core/orchestrator.js";
 import type { ScenarioRoles } from "../src/core/roles.js";
 import type { RunEvent, ScenarioData, ScenarioPack } from "../src/core/types.js";
-import { payoutChangePack } from "../src/scenarios/payout-change/pack.js";
+import { payoutChangePack, ruleConstants } from "../src/scenarios/payout-change/pack.js";
 import { payoutMini } from "./fixtures/payout-mini.js";
 
 const pack = payoutChangePack(payoutMini);
@@ -385,6 +385,31 @@ describe("payout runtime", () => {
     expect(event?.loopId).toBeTruthy();
     expect(raw).not.toContain("rowResponse");
     expect(raw).not.toContain("sk-test-");
+  });
+
+  it("writes a notice citing the timestamp and rule constants returned by the hold facts tool", async () => {
+    const notice = [
+      "1) The account changed on 2026-11-26 09:00 (2026-11-26T09:00:00Z), within 72 hours of the batch.",
+      "2. The payout exceeds 3x the 90-day median.",
+      "This is not financial advice.",
+    ].join("\n");
+    const scripted = {
+      ...pack.scripted,
+      next: (...args: Parameters<typeof pack.scripted.next>) => {
+        const next = pack.scripted.next(...args);
+        if ("call" in next && next.call.name === "write_hold_notice") next.call.args.text = notice;
+        return next;
+      },
+    };
+    const data = oneChunk();
+    data.items[0] = { ...payoutMini().items[1], amountCents: 16_000 };
+    data.chunks[0].itemIds = [data.items[0].id];
+    const { events, ledger } = await run({ data, pack: { ...pack, scripted } });
+    expect(events.filter(({ kind }) => kind === "citation.reject")).toEqual([]);
+    expect(ledger.holds[0]).toMatchObject({
+      notice,
+      sources: expect.arrayContaining(Object.values(ruleConstants)),
+    });
   });
 
   it("refuses to write a notice with an unsupported number", async () => {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runScenario } from "../src/core/orchestrator.js";
 import type { Arrival, RunEvent, ScenarioData, WorkItem } from "../src/core/types.js";
-import { doublePledgePack } from "../src/scenarios/double-pledge/pack.js";
+import { doublePledgePack, ruleConstants } from "../src/scenarios/double-pledge/pack.js";
 import { preparePledgeData } from "../src/scenarios/double-pledge/rules.js";
 
 const origin = "scenario:double-pledge";
@@ -124,6 +124,7 @@ describe("double-pledge pack", () => {
   it("links the altered submission and holds the cross-lender, registry, and missing-ledger requests with evidence", async () => {
     const { ledger, events } = await run(fixture());
     expect(ledger.holds.map(({ itemId }) => itemId)).toEqual(["FR-1", "FR-2", "FR-3"]);
+    expect(ledger.holds[0].sources).toEqual(expect.arrayContaining(Object.values(ruleConstants)));
     const link = events.find(({ data }) => data?.table === "links" && data.rowId === "IN-0001");
     expect(link?.sources?.map(({ source }) => source)).toEqual(expect.arrayContaining([
       `${origin}#invoices/IV-00001`, `${origin}#invoices/IV-00009`,
