@@ -45,17 +45,21 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
     let nextArrival = 0;
     const inbox: Arrival[] = [];
     let onArrival = (arrival: Arrival) => { inbox.push(arrival); };
-    function deliverThrough(atMs: number): void {
-      while (nextArrival < arrivals.length && arrivals[nextArrival].atTick * tickMs <= atMs) {
+    function deliverThrough(atMs: number, inclusive = true): void {
+      while (nextArrival < arrivals.length) {
+        const arrivalMs = arrivals[nextArrival].atTick * tickMs;
+        if (arrivalMs > atMs || (!inclusive && arrivalMs === atMs)) break;
         const arrival = arrivals[nextArrival++];
-        ledger.addArrival(arrival, arrival.atTick * tickMs);
+        ledger.addArrival(arrival, arrivalMs);
         onArrival(arrival);
       }
     }
 
     const gate = createGate({
       ledger, tickMs, failPolicy, roles, gatedTools: pack.gatedTools,
-      nowMs: log.nowMs, emit: log.emit, deliverThrough,
+      nowMs: log.nowMs, emit: log.emit,
+      deliverBefore: (atMs) => deliverThrough(atMs, false),
+      matchArrivalSubjects: (text) => pack.matchArrivalSubjects?.({ tables: data.tables }, text) ?? [],
     });
 
     const dispatch = (chunk: Chunk) => loops.run(roles.dispatcher, { chunkId: chunk.id }, undefined,
@@ -110,6 +114,8 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
       }
       try {
         while (pending.size) await Promise.all(pending);
+        gate.resolveTimeoutHolds();
+        while (pending.size) await Promise.all(pending);
         if (errors.length) throw errors[0];
       } finally {
         unsubscribe();
@@ -123,9 +129,13 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
         if (signal?.kind === "hold") holds.push(signal.itemId);
         if (signal?.kind === "evidence") evidence.set(signal.itemId, signal.revision);
       });
-      async function reviewInbox(): Promise<void> {
-        deliverThrough(log.nowMs());
-        for (const arrival of inbox.splice(0)) await triage(arrival);
+      async function reviewInbox(cutoff = Infinity): Promise<void> {
+        while (log.nowMs() < cutoff) {
+          deliverThrough(log.nowMs());
+          const arrival = inbox.shift();
+          if (!arrival) return;
+          await triage(arrival);
+        }
       }
       async function reviewEvidence(): Promise<void> {
         const entries = [...evidence];
@@ -136,12 +146,20 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
       }
       async function rounds(): Promise<void> {
         for (const chunk of chunks) {
-          await reviewInbox();
+          const cutoff = due(chunk);
+          await reviewInbox(cutoff);
           await reviewEvidence();
           await scan(chunk);
-          await until(dispatchAt(chunk));
+          while (log.nowMs() < cutoff) {
+            await reviewInbox(cutoff);
+            await reviewEvidence();
+            if (inbox.length) continue;
+            const nextArrivalMs = nextArrival < arrivals.length ? arrivals[nextArrival].atTick * tickMs : Infinity;
+            await until(Math.min(cutoff, nextArrivalMs));
+          }
+          // Keep the single agent seat open for intake up to the cut-off.
+          // The tick can settle the release even while another loop completes.
           await dispatch(chunk);
-          await until(due(chunk));
         }
       }
       try {
@@ -150,6 +168,7 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
         if (failure) throw failure.reason;
         await reviewInbox();
         await reviewEvidence();
+        gate.resolveTimeoutHolds();
         for (const itemId of holds) await explain(itemId);
       } finally {
         unsubscribe();

@@ -68,8 +68,11 @@ describe("payout MCP server over stdio", () => {
     expect(summary.inputSchema.required).toEqual(["runId"]);
   });
 
-  it("checks a small supplied batch, explains a hold, and retrieves the summary", async () => {
+  it("checks a supplied batch with five-digit account references, explains a hold, and retrieves the summary", async () => {
     const { batchAt: _batchAt, ...data } = payoutMini();
+    data.items[0].destination = "ACCT-00001";
+    data.tables.master[0].account_ref = "ACCT-00001";
+    data.arrivals[0].body = data.arrivals[0].body.replace("ACCT-0999", "ACCT-09999");
     const checked = await call("check_payout_batch", { data });
     expect(checked.isError).toBeFalsy();
     const batch = checked.structuredContent as BatchResult;
@@ -77,6 +80,10 @@ describe("payout MCP server over stdio", () => {
     expect(batch.held.length).toBeGreaterThan(0);
     expect(batch.held.every(({ sources }) => sources.length > 0)).toBe(true);
     expect(batch.held.length + batch.released.length).toBe(data.items.length);
+    expect(batch.released).toContain("PO-00001");
+    expect(batch.held.find(({ itemId }) => itemId === "PO-00005")?.sources).toContainEqual(
+      expect.objectContaining({ field: "requestedAccount", value: "ACCT-09999" }),
+    );
 
     const held = batch.held.find(({ itemId }) => itemId === "PO-00002")!;
     expect(held).toBeDefined();

@@ -12,7 +12,6 @@ export interface RequestLink {
 }
 
 type Triage = RequestLink | { arrivalId: string; reason: string; sources: SourceRef[] };
-type LedgerHold = Hold & { notice?: string };
 
 export type LedgerSignal =
   | { kind: "evidence"; itemId: string; revision: number }
@@ -24,7 +23,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
   private readonly arrivals = new Map<string, { row: Arrival; atMs: number }>();
   private readonly links = new Map<string, { row: Triage; atMs: number }>();
   private readonly verdicts = new Map<string, Array<{ row: Verdict; revision: number }>>();
-  private readonly holds = new Map<string, LedgerHold>();
+  private readonly holds = new Map<string, Hold>();
   private readonly scans = new Map<string, number>();
   private readonly evidence = new Map<string, number[]>();
   private readonly releaseLists = new Map<string, Set<string>>();
@@ -95,7 +94,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     return [...latest.values()];
   }
 
-  addHold(hold: LedgerHold): void {
+  addHold(hold: Hold): void {
     if (this.holds.has(hold.itemId)) return;
     const row = structuredClone(hold);
     this.holds.set(row.itemId, row);
@@ -107,6 +106,21 @@ export class Ledger extends RuntimeState implements LedgerApi {
 
   holdFor(itemId: string): Hold | undefined {
     return structuredClone(this.holds.get(itemId));
+  }
+
+  resolveHold(itemId: string, resolution: Pick<Hold, "reasons" | "sources" | "notice"> & {
+    outcome: NonNullable<Hold["outcome"]>;
+  }): void {
+    const hold = this.holds.get(itemId);
+    if (!hold || hold.outcome) return;
+    const after = { ...hold, ...resolution };
+    this.holds.set(itemId, after);
+    this.write("holds", itemId, after, this.roles?.dispatcher, after.sources);
+    this.emit({
+      kind: "hold.resolved", agent: this.roles?.dispatcher, itemIds: [itemId],
+      data: { itemId, outcome: after.outcome }, sources: after.sources,
+    });
+    if (after.outcome === "confirmed") this.notify({ kind: "hold", itemId });
   }
 
   addNotice(itemId: string, text: string): void {
@@ -150,7 +164,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
   untriagedAt(cutoff: number): Arrival[] {
     return [...this.arrivals.values()].flatMap(({ row, atMs }) => {
       const triagedAt = this.links.get(row.id)?.atMs ?? Infinity;
-      return atMs <= cutoff && triagedAt > cutoff ? [row] : [];
+      return atMs < cutoff && triagedAt > cutoff ? [row] : [];
     });
   }
 

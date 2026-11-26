@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { makeScrubber } from "./core/eventlog.js";
 import { runScenario, type RunOptions } from "./core/orchestrator.js";
 import type { RunEvent, RunSummary, ScenarioData, ScenarioPack, Scale } from "./core/types.js";
+import { countHoldOutcomes } from "./eval/hold-outcomes.js";
 import { payoutChangePack } from "./scenarios/payout-change/pack.js";
 
 const scales = ["demo", "full", "mini"] as const;
@@ -52,17 +53,17 @@ async function evaluateRun(evaluator: EvaluatorModule, eventsPath: string, data:
   const events = log.trimEnd().split("\n").map((line) => JSON.parse(line) as RunEvent);
   const summary = await evaluator.evaluate(events, data);
   await writeFile(join(out, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
-  return summary;
+  return { summary, holdOutcomes: countHoldOutcomes(events) };
 }
 
-function sweepRow(summary: RunSummary) {
+function sweepRow({ summary, holdOutcomes }: Awaited<ReturnType<typeof evaluateRun>>) {
   const {
     mode, tickMs, released, held, plantedHeld, plantedMissed, falseHolds, heldByTimeout,
     maxConcurrentLoops, modelCalls, wallMs,
   } = summary;
   return {
     mode, tickMs, released, held, plantedHeld, plantedMissed, falseHolds, heldByTimeout,
-    maxConcurrentLoops, modelCalls, wallMs,
+    ...holdOutcomes, maxConcurrentLoops, modelCalls, wallMs,
   };
 }
 

@@ -11,22 +11,7 @@ export const note = "Not financial advice. Synthetic data. Nothing moves.";
 const pack = payoutChangePack(generate);
 
 export function generateDemo(seed = SCALES.demo.seed): ScenarioData {
-  // Keep existing four-digit references and preserve joins across records and arrival text.
-  const json = JSON.stringify(pack.generate({ ...SCALES.demo, seed }));
-  const used = new Set(json.match(/\bACCT-\d{4}\b/g));
-  const aliases = new Map<string, string>();
-  let next = 1;
-  return JSON.parse(json.replace(/\bACCT-\d{5}\b/g, (reference) => {
-    const existing = aliases.get(reference);
-    if (existing) return existing;
-    let alias: string;
-    do {
-      if (next > 9_999) throw new Error("Demo exceeded the four-digit account reference space.");
-      alias = `ACCT-${String(next++).padStart(4, "0")}`;
-    } while (used.has(alias));
-    aliases.set(reference, alias);
-    return alias;
-  })) as ScenarioData;
+  return pack.generate({ ...SCALES.demo, seed });
 }
 
 interface RunRecord {

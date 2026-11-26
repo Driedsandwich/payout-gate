@@ -1,5 +1,6 @@
 import type { ScenarioPackWithRoles, ScenarioRoles } from "../../core/roles.js";
 import type { AgentSpec, ScenarioData, Scale } from "../../core/types.js";
+import { matchArrivalSubjects } from "./inbox.js";
 import { scripted } from "./scripted.js";
 import { agentTools } from "./tools.js";
 
@@ -29,6 +30,7 @@ export function payoutChangePack(generate: (scale: Scale) => ScenarioData): Scen
     gatedTools: ["release_chunk"],
     roles,
     requiredVerdicts: roles.checkers,
+    matchArrivalSubjects,
     scripted,
   };
 }

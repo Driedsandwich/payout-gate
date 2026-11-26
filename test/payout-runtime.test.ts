@@ -8,7 +8,7 @@ import { Ledger } from "../src/core/ledger.js";
 import { createLoopRuntime } from "../src/core/loop-runtime.js";
 import { runScenario, type RunOptions } from "../src/core/orchestrator.js";
 import type { ScenarioRoles } from "../src/core/roles.js";
-import type { RunEvent, ScenarioPack } from "../src/core/types.js";
+import type { RunEvent, ScenarioData, ScenarioPack } from "../src/core/types.js";
 import { payoutChangePack } from "../src/scenarios/payout-change/pack.js";
 import { payoutMini } from "./fixtures/payout-mini.js";
 
@@ -66,7 +66,7 @@ function releasedByTool(events: RunEvent[]): string[] {
   });
 }
 
-function oneChunk() {
+function oneChunk(): ScenarioData & { batchAt: string } {
   const fixture = payoutMini();
   return {
     ...fixture, arrivals: [], items: fixture.items.slice(0, 1),
@@ -74,7 +74,102 @@ function oneChunk() {
   };
 }
 
+function cleanPair(body: string, atTick: number, subjectId?: string) {
+  const data = oneChunk();
+  data.items.push(payoutMini().items[2]);
+  data.chunks[0].itemIds.push(data.items[1].id);
+  data.arrivals = [{ id: "IN-0010", atTick, channel: "email", body, subjectId, sources: [] }];
+  return { ...data, labels: [] };
+}
+
 describe("payout runtime", () => {
+  it("logs unread noise without holding any payouts, even with subject metadata", async () => {
+    const data = cleanPair("Where can I download my tax form?", 0.99, "CR-0001");
+    const { ledger, events } = await run({ data });
+    expect(ledger.items.map(({ status }) => status)).toEqual(["released", "released"]);
+    expect(events.filter(({ kind }) => kind === "gate.unread")).toEqual([
+      expect.objectContaining({ data: { arrivalId: "IN-0010" } }),
+    ]);
+    expect(events.some(({ kind }) => kind === "gate.hold")).toBe(false);
+  });
+
+  it.each(["CR-0001", "@Ada", "ada@example-creators.test"])(
+    "pre-screens %s anywhere in unread text and holds only that creator's payout", async (name) => {
+      const data = cleanPair(`Question for ${name} about my tax form.`, 0.99);
+      const { events, ledger } = await run({ data });
+      const gateHolds = events.filter(({ kind }) => kind === "gate.hold");
+      expect(gateHolds).toEqual([expect.objectContaining({
+        itemIds: ["PO-00001"],
+        data: {
+          chunkId: "CH-01", timeout: true, reasons: ["named in a message not read before the cut-off"],
+        },
+        sources: expect.arrayContaining([
+          { source: "data/arrivals.jsonl#IN-0010" },
+          { source: "data/creators.csv#CR-0001", field: "id", value: "CR-0001" },
+        ]),
+      })]);
+      expect(ledger.items[1].status).toBe("released");
+    },
+  );
+
+  it("excludes an arrival at the exact cut-off", async () => {
+    const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 1);
+    const { ledger, events } = await run({ data });
+    expect(ledger.items.map(({ status }) => status)).toEqual(["released", "released"]);
+    expect(events.some(({ kind }) => kind === "gate.hold" || kind === "gate.unread")).toBe(false);
+  });
+
+  it("upgrades a timeout hold when late suspicious verdicts arrive and waits for the Explainer", async () => {
+    const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 0.99);
+    const { events, ledger } = await run({ data });
+    expect(events.find(({ kind }) => kind === "gate.hold")?.data?.timeout).toBe(true);
+    expect(events.filter(({ kind }) => kind === "hold.resolved")).toEqual([
+      expect.objectContaining({ data: { itemId: "PO-00001", outcome: "confirmed" } }),
+    ]);
+    expect(ledger.holds[0]).toMatchObject({
+      itemId: "PO-00001", outcome: "confirmed",
+      reasons: [expect.stringContaining("absent from the creator’s source records")],
+      sources: expect.arrayContaining([
+        expect.objectContaining({ source: "data/master.csv#CR-0001" }),
+        expect.objectContaining({ source: "data/arrivals.jsonl#IN-0010" }),
+      ]),
+      notice: expect.stringMatching(/payout is on hold.*IN-0010/),
+    });
+    expect(events.find(({ kind, agent }) => kind === "ledger.write" && agent === "Explainer")?.data?.table).toBe("holds");
+    expect(events.at(-1)?.kind).toBe("run.finished");
+  });
+
+  it("records late payment after both required checks clear a timeout hold", async () => {
+    const data = cleanPair("Please use ACCT-0001 for CR-0001's payout.", 0.99);
+    const { events, ledger } = await run({ data, mode: "sequential" });
+    expect(ledger.verdicts.filter(({ value }) => value === "clear")).toHaveLength(2);
+    expect(ledger.holds[0]).toMatchObject({
+      itemId: "PO-00001", outcome: "cleared_late", reasons: ["cleared after cut-off"],
+      notice: expect.stringContaining("paid late"),
+    });
+    expect(events.filter(({ kind }) => kind === "hold.resolved")).toEqual([
+      expect.objectContaining({ data: { itemId: "PO-00001", outcome: "cleared_late" } }),
+    ]);
+    expect(events.at(-1)?.kind).toBe("run.finished");
+  });
+
+  it("triages a message delivered while a sequential round is already processing the inbox", async () => {
+    const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 0.05);
+    data.arrivals.unshift({
+      id: "IN-0009", atTick: 0, channel: "email", body: "Where can I download my tax form?", sources: [],
+    });
+    const { events } = await run({ data, mode: "sequential", tickMs: 500 });
+    const firstIntake = events.find(({ kind, agent }) => kind === "message_received.started" && agent === "InboxWatcher")!;
+    const arrival = events.find(({ kind, data }) => kind === "arrival" && data?.arrivalId === "IN-0010")!;
+    const link = events.find(({ kind, data }) => kind === "ledger.write" && data?.table === "links" && data.rowId === "IN-0010")!;
+    expect(firstIntake.seq).toBeLessThan(arrival.seq);
+    expect(link.tMs).toBeLessThan(500);
+    expect(events.find(({ kind }) => kind === "gate.hold")).toMatchObject({
+      itemIds: ["PO-00001"], data: { timeout: false },
+    });
+    expect(countLoops(events)).toBe(1);
+  });
+
   it("holds both planted takeovers, releases all other items, and overlaps loops", async () => {
     const data = payoutMini();
     const { ledger, events, maxConcurrentLoops } = await run({ data });
@@ -267,7 +362,8 @@ describe("payout runtime", () => {
     const firstCheck = seen.indexOf("RecordChecker");
     expect(firstCheck).toBeGreaterThan(0);
     expect(seen.slice(0, firstCheck).every((name) => name === "InboxWatcher")).toBe(true);
-    expect(seen.slice(firstCheck, firstCheck + 4)).toEqual(["RecordChecker", "PolicyAgent", "BatchAuditor", "Dispatcher"]);
+    expect(seen[firstCheck + 1]).toBe("PolicyAgent");
+    expect(seen.indexOf("BatchAuditor")).toBeLessThan(seen.indexOf("Dispatcher"));
     const held = new Set(ledger.holds.map(({ itemId }) => itemId));
     expect(releasedByTool(events).every((id) => !held.has(id))).toBe(true);
   });

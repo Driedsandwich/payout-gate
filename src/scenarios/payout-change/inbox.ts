@@ -25,7 +25,7 @@ export function readRequest(arrival: Arrival) {
   };
 }
 
-export function findCreator(data: ScenarioData, text: string, message = text) {
+function creatorMatches(data: Pick<ScenarioData, "tables">, text: string) {
   const creators = data.tables.creators ?? [];
   const lower = text.toLowerCase();
   const emails = new Set(lower.match(emailPattern) ?? []);
@@ -35,6 +35,22 @@ export function findCreator(data: ScenarioData, text: string, message = text) {
     typeof contact_email === "string" && emails.has(contact_email.toLowerCase()));
   const handles = creators.filter(({ handle }) =>
     typeof handle === "string" && words.has(handle.toLowerCase().replace(/^@/, "")));
+  return { explicit, contacts, handles };
+}
+
+function creatorSources(creator: ScenarioData["tables"][string][number]) {
+  return rowSources("creators", creator, ["id", "handle", "contact_email"]);
+}
+
+export function matchArrivalSubjects(data: Pick<ScenarioData, "tables">, text: string) {
+  const { explicit, contacts, handles } = creatorMatches(data, text);
+  return [...new Set([...explicit, ...contacts, ...handles])].map((creator) => ({
+    subjectId: creator.id, sources: creatorSources(creator),
+  }));
+}
+
+export function findCreator(data: Pick<ScenarioData, "tables">, text: string, message = text) {
+  const { explicit, contacts, handles } = creatorMatches(data, text);
   const candidates = explicit.length ? explicit : contacts.length ? contacts : handles;
   const creator = candidates.length === 1 ? candidates[0] : undefined;
   if (!creator) return {};
@@ -46,5 +62,5 @@ export function findCreator(data: ScenarioData, text: string, message = text) {
     rule: "sender_domain_mismatch", senderDomain, contactDomain,
     sources: rowSources("creators", creator, ["contact_email"]),
   }] : [];
-  return { creatorId: creator.id, signals, sources: rowSources("creators", creator, ["id", "handle", "contact_email"]) };
+  return { creatorId: creator.id, signals, sources: creatorSources(creator) };
 }

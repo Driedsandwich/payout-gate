@@ -56,24 +56,34 @@ Packs can declare their dispatcher, intake, auditor, checkers, and explainer in 
 
 ### Gate (the `InterceptionHandler` on `release_chunk`)
 
-Before `release_chunk(CH-k)` runs, the gate emits `gate.wait` and waits (at most until tick `k`) until:
-1. BatchAuditor has scanned `CH-k`;
-2. every arrival that has arrived so far is triaged (linked or no-action);
-3. every item of `CH-k` that is linked or flagged has a verdict from both RecordChecker and PolicyAgent.
+The gate emits `gate.wait` and settles each chunk at its scheduled cut-off. It uses the audit and checker verdicts
+available at the tick. A suspicious checker verdict holds the payout with its reasons and source rows.
 
-Then it rewrites the call: clear items are released, suspicious items are held (`gate.hold` with reasons + sources).
-When tick `k` comes and an item is still uncertain, the product policy is `--fail-policy hold` (held, paid late, counted in
-`heldByTimeout`). The gate writes a notice listing the pending work at the tick when it holds a payout for review.
-`--fail-policy release` exists only to measure what an unchecked release would have paid out.
-The wait is per chunk, so the rest of the batch keeps flowing.
+For arrivals before the tick that are still untriaged, the gate uses the same creator matcher as `find_creator`.
+It checks the message text for creator IDs, handles and contact emails. An unread message can hold only payouts in
+the chunk for creators it names, with the reason “named in a message not read before the cut-off” and the arrival
+ID and matched creator rows as sources. The gate logs `gate.unread` for an unread message with no matches.
+Messages arriving at or after the tick belong to the next chunk.
+
+With `--fail-policy hold`, a missing audit, inconclusive required checks, or an unread message naming the creator
+causes a timeout hold with a notice about the pending work. With `--fail-policy release`, the gate releases those
+uncertain payouts. Decisions apply per chunk.
+
+Before the run finishes, it waits for intake, audit and checker loops to finish and reviews the timeout holds.
+Suspicious verdicts convert a timeout hold to a verdict hold with the verdict source rows and an Explainer notice.
+When the audit and relevant intake are complete and all required checks are clear, the hold is recorded as
+“cleared after cut-off” and the payout is counted as paid late. The hold row and `hold.resolved` record the outcome.
+An inconclusive review leaves the payout held. The sweep counts `confirmedLate` and `clearedLate` alongside the
+original cut-off counts.
 
 ### Sequential baseline (`--mode sequential`)
 
-The same agents, tools, prompts and gate, but only one loop runs at a time, in this order per chunk:
-InboxWatcher for each arrival received so far → RecordChecker and PolicyAgent for each linked/flagged item → BatchAuditor scan → Dispatcher release.
-Arrivals that land while these steps run are only seen at the next chunk. The baseline writes verdict-based explanations
-after the release rounds and the final inbox and evidence review. The same release clock and the same fail policy apply,
-so a sequential run that cannot keep up shows it as late payouts (`hold`) or paid-out takeovers (`release`). Nothing else is weakened.
+The same agents, tools, prompts and gate run one loop at a time. Before each release, InboxWatcher triages newly
+arrived messages one at a time until none is untriaged or the tick comes. RecordChecker and PolicyAgent then check
+linked items, and BatchAuditor scans the chunk. The baseline checks flagged items and returns to intake as new
+messages arrive during the round. Only the tick closes intake for that release. The Dispatcher loop follows
+pre-release work, and the gate settles the release at the scheduled tick even if a loop is still running.
+The baseline finishes pending inbox and evidence review and writes verdict-based explanations before the run ends.
 
 ## Scenario B: `double-pledge` (second)
 
@@ -116,13 +126,16 @@ Same gate rules, same baseline rule.
 | `gate.wait` | the chunk's item ids | `{ chunkId, dueMs }` | — |
 | `gate.pass` | released item ids | `{ chunkId }` | — |
 | `gate.hold` | held item ids | `{ chunkId, timeout: boolean, reasons: string[] }` | the rows behind the reasons |
+| `gate.unread` | — | `{ arrivalId }` | the unread arrival that named no creator |
+| `hold.resolved` | `[itemId]` | `{ itemId, outcome: "confirmed" \| "cleared_late" }` | the rows supporting the outcome |
 | `inference.completed` | — | `{ usage?: { input: number, output: number } }` (copied from Mozaik's token usage when present) | — |
 | `inference.failed` | — | `{ error: string }` | — |
 | `citation.reject` | — | `{ agent, text, numbers: string[] }` | — |
 | `run.finished` | — | `{ wallMs }` | — |
 
 Mozaik events keep their payload under `data.payload` (trimmed to what is JSON-safe) and their `loopId` in `loopId`.
-The final status of an item is the `after.status` of its last `ledger.write` on table `items`.
+The cut-off status of an item is the `after.status` of its last `ledger.write` on table `items`.
+The optional `Hold.outcome` field records what happened to a timeout hold after the cut-off.
 A loop is active from its `message_received.started` to its `model.answer` or `inference.failed` (same `loopId`).
 
 ## The agent-facing door (MCP)

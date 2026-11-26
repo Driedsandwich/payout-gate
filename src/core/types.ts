@@ -39,6 +39,8 @@ export type RunEventKind =
   | "gate.wait"          // the gate is waiting for verdicts on item ids
   | "gate.pass"          // the gate let a gated tool call run
   | "gate.hold"          // the gate rewrote a gated tool call into a hold notice
+  | "gate.unread"        // a message was unread at the cut-off and named no subject
+  | "hold.resolved"      // late review confirmed the hold or cleared the item for late payment
   | "citation.reject"    // an agent text contained a number with no SourceRef behind it
   | "run.started"
   | "run.finished";
@@ -95,6 +97,8 @@ export interface Hold {
   atMs: number;
   reasons: string[];
   sources: SourceRef[];
+  notice?: string;
+  outcome?: "confirmed" | "cleared_late";
   resolvedBy?: string;     // human reviewer name when approved/rejected
 }
 
@@ -202,6 +206,8 @@ export interface ScenarioPack {
   gatedTools: string[];            // tool names the InterceptionHandler guards, e.g. ["release_chunk"]
   /** which verdict-producing agents the gate waits for, per gated call */
   requiredVerdicts: string[];
+  /** Match subjects named in unread message text using the same logic as the intake tool. */
+  matchArrivalSubjects?(data: Pick<ScenarioData, "tables">, text: string): Array<{ subjectId: string; sources: SourceRef[] }>;
   scripted: ScriptedPolicy;
 }
 

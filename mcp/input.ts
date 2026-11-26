@@ -4,7 +4,7 @@ const payoutId = z.string().regex(/^PO-\d{5,}$/);
 const creatorId = z.string().regex(/^CR-\d{4,}$/);
 const chunkId = z.string().regex(/^CH-\d{2,}$/);
 const arrivalId = z.string().regex(/^IN-\d{4,}$/);
-const accountRef = z.string().regex(/^ACCT-\d{4}$/, "Expected a synthetic ACCT-NNNN reference");
+const accountRef = z.string().regex(/^ACCT-\d{4,5}$/, "Expected a synthetic ACCT-NNNN or ACCT-NNNNN reference");
 const count = z.int().nonnegative();
 const text = z.string().min(1);
 const date = z.iso.datetime({ offset: true });
@@ -94,7 +94,7 @@ export function validateData(data: PayoutData): void {
     if (atTick > (chunks.length || 1)) throw new Error(`Arrival ${id} has atTick beyond the batch schedule.`);
     for (const [reference] of body.matchAll(/\bACCT-[\w-]*/gi)) {
       if (!accountRef.safeParse(reference.toUpperCase()).success) {
-        throw new Error(`Arrival ${id} must use ACCT-NNNN account references.`);
+        throw new Error(`Arrival ${id} must use ACCT-NNNN or ACCT-NNNNN account references.`);
       }
     }
   }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
-import type { RunSummary } from "../src/core/types.js";
+import type { RunEvent, RunSummary } from "../src/core/types.js";
 import { MINI_SCALE } from "./fixtures/payout-mini.js";
 
 it("writes a sweep row and evaluated run for each mode and tick on the mini fixture", async () => {
@@ -18,7 +18,9 @@ it("writes a sweep row and evaluated run for each mode and tick on the mini fixt
       "--import", "tsx", "--import", noFetch, fileURLToPath(new URL("../src/cli.ts", import.meta.url)),
       "sweep", "--scenario", "payout-change", "--scale", "mini", "--ticks", "20,40", "--inference", "scripted", "--out", out,
     ]);
-    const { note, rows } = JSON.parse(await readFile(join(out, "sweep.json"), "utf8")) as { note: string; rows: RunSummary[] };
+    const { note, rows } = JSON.parse(await readFile(join(out, "sweep.json"), "utf8")) as {
+      note: string; rows: Array<RunSummary & { confirmedLate: number; clearedLate: number }>;
+    };
     expect(note).toBe("Scripted latency is simulated; these numbers show the mechanism, not performance.");
     expect(stdout).toContain(note);
     expect(stdout).toContain("plantedMissed");
@@ -33,12 +35,17 @@ it("writes a sweep row and evaluated run for each mode and tick on the mini fixt
         mode, tickMs, released, held, plantedHeld, plantedMissed, falseHolds, heldByTimeout,
         maxConcurrentLoops, modelCalls, wallMs,
       } = summary;
+      const log = await readFile(join(directory, "events.jsonl"), "utf8");
+      const resolutions = log.trimEnd().split("\n").map((line) => JSON.parse(line) as RunEvent)
+        .filter(({ kind }) => kind === "hold.resolved");
       expect(row).toEqual({
         mode, tickMs, released, held, plantedHeld, plantedMissed, falseHolds, heldByTimeout,
+        confirmedLate: resolutions.filter(({ data }) => data?.outcome === "confirmed").length,
+        clearedLate: resolutions.filter(({ data }) => data?.outcome === "cleared_late").length,
         maxConcurrentLoops, modelCalls, wallMs,
       });
       expect(released + held).toBe(MINI_SCALE.items);
-      expect(await readFile(join(directory, "events.jsonl"), "utf8")).toContain('"kind":"run.finished"');
+      expect(log).toContain('"kind":"run.finished"');
     }
   } finally {
     await rm(out, { recursive: true, force: true });
