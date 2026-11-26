@@ -90,7 +90,9 @@ Same gate rules, same baseline rule.
 
 - `scripted` (default, no key): `ScenarioPack.scripted` decides each step; deterministic for a seed.
 - `live`: provider from `--provider` (`openrouter` uses Mozaik's `OpenAIChatCompletions` with base URL `https://openrouter.ai/api/v1`;
-  `anthropic` and `openai` use Mozaik's built-in endpoints). Keys come only from environment variables.
+  `anthropic` and `openai` use Mozaik's built-in endpoints). Keys come only from the environment variables
+  `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and are never logged or written to disk.
+- Live runs cap concurrent loops with `--max-loops` (default 8) so provider rate limits are respected; the cap is recorded in run.started.
   Gemini's built-in endpoint in core 6.0.0 fails on the second tool round trip (missing thought signature), so it is not offered.
 - Every runner is wrapped: a throw becomes `inference.failed` + a model message, never a silent stop.
 
