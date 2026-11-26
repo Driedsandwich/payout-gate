@@ -1,0 +1,33 @@
+/* A · Canal & copper. Water through the canal is teal. Copper is reserved for payouts held at the gate. */
+/* audit:contrast body normal --text --background */
+/* audit:contrast muted-copy normal --text-muted --background */
+/* audit:contrast on-accent normal --on-accent --accent */
+/* audit:contrast decision-1-mark nontext --decision-1 --surface */
+/* audit:ladder grayscale --background --surface --surface-strong --border --text-muted --text */
+/* audit:group decisions --decision-1 --decision-2 --decision-3 */
+/* audit:group key-role-separation --accent --success --decision-1 */
+/* audit:group negative-role-separation --danger --decision-2 */
+
+:root {
+  --background: #FFFFFF;
+  --surface: #F2F6F4;
+  --surface-strong: #E5EDE9;
+  --border: #A7B7B0;
+  --text: #182722;
+  --text-muted: #4C6059;
+  --accent: #843C19;
+  --on-accent: #FFFFFF;
+  --success: #2D4F7C;
+  --on-success: #FFFFFF;
+  --danger: #6E2A8C;
+  --on-danger: #FFFFFF;
+  --warning: #695600;
+  --on-warning: #FFFFFF;
+  --focus: #245BB2;
+  /* Sent: solid. Held: diagonal hatch. Waiting: outline. */
+  --decision-1: #14746F;
+  --decision-2: #A04B25;
+  --decision-3: #8C8C8C;
+  /* Timeline bars encode agent activity. */
+  --data-agent: #55918A;
+}
