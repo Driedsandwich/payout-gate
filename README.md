@@ -85,7 +85,7 @@ npm ci
 npm run demo                 # keyless, scripted, payouts, concurrent
 npm run demo:sequential      # same agents, one loop at a time
 npm run demo:pledge          # second scenario
-npm test                     # 94 tests at the time of writing
+npm test                     # 114 tests at the time of writing
 ```
 
 Reproduce the live comparison (needs a key; our four live runs together cost at most USD 0.21, and your cost depends on your provider and model):

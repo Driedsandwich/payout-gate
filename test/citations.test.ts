@@ -51,13 +51,59 @@ it("accepts a tool's display amount or its numeric equivalent and rejects an inv
   expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ data: expect.objectContaining({ numbers: ["13095.6"] }) }));
 });
 
-it("does not cite digits embedded in tool output keys or prose", () => {
-  const outputs = [JSON.stringify({ "2025-02-20": "row", note: "The amount is 24." })];
+it("does not cite numbers embedded in tool output keys or prose", () => {
+  const outputs = [JSON.stringify({ "2025-02-20": "row", note: "The amount is 24.", count: "five requests" })];
   const emit = vi.fn();
-  expect(checkCitations("24 on 2025-02-20.", [], actor, emit, outputs)).toBe(false);
+  expect(checkCitations("24 on 2025-02-20 with 5 requests.", [], actor, emit, outputs)).toBe(false);
   expect(emit).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
-    numbers: ["24", "2025-02-20"],
+    numbers: ["24", "2025-02-20", "5"],
   }) }));
+});
+
+it.each([
+  ["The payout was $5k.", "$5k", 5_000],
+  ["We will review the hold within 72h.", "72h", 72],
+  ["The payout was 3x the median.", "3x", 3],
+  ["The change was on the 28th.", "28th", 28],
+  ["The fee was 10%.", "10%", 10],
+  ["The total was 2.5m.", "2.5m", 2_500_000],
+  ["The payout was five thousand dollars.", "five thousand", 5_000],
+  ["There were three requests.", "three", 3],
+  ["There were twelve changes.", "twelve", 12],
+  ["Review the one remaining request.", "one", 1],
+  ["There were zero payouts.", "zero", 0],
+  ["It took ninety-nine days.", "ninety-nine", 99],
+  ["The total was one billion two million three thousand four hundred and twenty-one.",
+    "one billion two million three thousand four hundred and twenty-one", 1_002_003_421],
+  ["The payout was EUR1.001k.", "EUR1.001k", 1_001],
+  ["The payout was 40 USD.", "40 USD", 40],
+  ["The payout was €2bn.", "€2bn", 2_000_000_000],
+  ["The review took 12hrs.", "12hrs", 12],
+  ["The review took 4days.", "4days", 4],
+])("requires a matching scalar tool value for %s", (notice, token, value) => {
+  const emit = vi.fn();
+  expect(checkCitations(notice, [], actor, emit)).toBe(false);
+  expect(emit).toHaveBeenCalledExactlyOnceWith({
+    ...actor, kind: "citation.reject", data: { agent: actor.agent, text: notice, numbers: [token] },
+  });
+  emit.mockClear();
+  expect(checkCitations(notice, [], actor, emit, [JSON.stringify({ value })])).toBe(true);
+  expect(emit).not.toHaveBeenCalled();
+});
+
+it("normalizes formatted scalar tool values the same way as notice quantities", () => {
+  const outputs = ["€ 5k", JSON.stringify(["72hr", "2.5m", "five thousand", "twelve days"])];
+  const emit = vi.fn();
+  expect(checkCitations("$5,000, 72 hours, 2500000, five thousand euros, and 12d.", [], actor, emit, outputs)).toBe(true);
+  expect(checkCitations("The amount was 5.", [], actor, emit, outputs)).toBe(false);
+});
+
+it("ignores identifiers, handles, and standalone pronouns without tool evidence", () => {
+  const notice = "Use in_app_2fa or 2FA. CR-0068 and ACCT-2407 appear in CL-0107 for amber.collage.0158. " +
+    "PO-00024 is the one that was held. See @2m or build-72h for the record.";
+  const emit = vi.fn();
+  expect(checkCitations(notice, [], actor, emit)).toBe(true);
+  expect(emit).not.toHaveBeenCalled();
 });
 
 it.each([
