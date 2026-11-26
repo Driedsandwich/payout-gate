@@ -2,13 +2,13 @@
 
 **Doubtful payouts wait. The batch keeps moving.**
 
-Replay: **https://headgate-replay.vercel.app** · Demo video (98 s): **https://youtu.be/OAmQfgiVWW8**
+Replay: [headgate-replay.vercel.app](https://headgate-replay.vercel.app) · Demo video (98 s): [youtu.be/OAmQfgiVWW8](https://youtu.be/OAmQfgiVWW8)
 
 > Synthetic data only. Not financial advice. Nothing in this project moves money.
 
 ## What it does
 
-A creator marketplace pays its creators in one Black Friday payout batch. While the batch runs, requests to change a creator's payout account keep arriving by email and support ticket, and some of them are account takeovers ("send today's payment to ACCT-6885 instead", from a look-alike domain). Checking the inbox once before the batch, or checking messages one at a time, either pays the attacker or pays honest creators late.
+A creator marketplace pays its creators in one Black Friday payout batch. While the batch runs, requests to change a creator's payout account keep arriving by email and support ticket, and some of them are account takeovers ("send today's payment to ACCT-6885 instead", from a look-alike domain). Checking the inbox once before the batch, or checking messages one at a time, can end up paying the attacker or paying honest creators late.
 
 Headgate runs six agents at the same time on Mozaik while the batch is released chunk by chunk on a fixed bank cut-off clock. A gate in front of the release tool lets clean payouts leave on their cut-off and holds only the payouts whose account is in doubt, with the record rows that prove why (for example `data/master.csv#CR-0024` and `data/arrivals.csv#IN-0002`). An operator can then approve a hold, which pays the **verified account on file**, or reject it, which keeps the payout held. In this demo nothing moves.
 
@@ -16,7 +16,7 @@ Why this matters (public context, not a result of this project): the FBI's [2024
 
 ## Why concurrency matters here
 
-The bank cut-off does not wait. Messages arrive, the inbox has to be read, the next chunks audited and the records checked, all before each chunk's cut-off. Running those checks at the same time lets them share the deadline window; unfinished work can still cause a hold, and the gate never releases a payout it is unsure about.
+The bank cut-off does not wait. Messages arrive, the inbox has to be read, the next chunks audited and the records checked, all before each chunk's cut-off. Running those checks at the same time lets them share the deadline window; unfinished work can still cause a hold, and with the default fail policy the gate does not release a payout it is unsure about.
 
 The comparison is fair by construction: the one-loop-at-a-time baseline uses the **same agents, prompts, tools, gate and clock**. Before each release it reads newly arrived messages one by one until none is unread or the cut-off comes. At a cut-off, an unread message stops only the payouts of the creators it names; a message that names nobody stops nothing.
 
@@ -51,7 +51,7 @@ TypeScript, Node 22, MIT licence. `@mozaik-ai/core` is pinned to `6.0.0`.
 - **Shared state:** a ledger on Mozaik `RuntimeState` (items, verdicts, holds, arrivals, links). Every write is an event in `runs/<id>/events.jsonl`.
 - **Gate:** a Mozaik `InterceptionHandler` on `release_chunk`. It waits per chunk until the chunk is audited, the arrivals so far are read and the linked or flagged items have verdicts from both checkers, or until the cut-off. Holds made at a cut-off are closed later: confirmed with evidence, cleared and paid late, or left held with a written reason.
 - **Citation check:** a hold notice is refused if it contains a number that no tool output of the same loop contains; after three refusals the gate writes the notice from the recorded sources.
-- **Rules learned from measuring Mozaik 6.0.0** (`docs/design/MOZAIK_6_NOTES.md`): one task is one `runLoop` with a fresh `ModelContext` (two loops on one agent memory mixed their messages); every inference runner is wrapped so a throw becomes an `inference.failed` event; live runs use OpenRouter through Mozaik's `OpenAIChatCompletions`, because the built-in Gemini endpoint failed on the second tool round trip in 6.0.0.
+- **Rules learned from measuring Mozaik 6.0.0** (`docs/design/MOZAIK_6_NOTES.md`): one task is one `runLoop` with a fresh `ModelContext` (two loops on one agent memory mixed their messages); every inference runner is wrapped so a throw becomes an `inference.failed` event; live runs use OpenRouter through Mozaik's `OpenAIChatCompletions`, because the built-in Gemini endpoint failed on the second tool round trip in our test with 6.0.0.
 - **Second scenario, same skeleton:** `double-pledge`, a fictional invoice-financing marketplace with three lenders, where the same receivable is submitted to two lenders (altered copy), is already pledged in a registry, or is missing from the debtor's ledger. Different agents (Intake, Fingerprinter, RegistryChecker, DebtorChecker), gated tool `fund_batch`. The payout scenario is the headline; this one shows the gate is not tied to one problem.
 
 ## Results (live runs)
