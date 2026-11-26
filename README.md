@@ -4,21 +4,23 @@
 
 Replay: [headgate-replay.vercel.app](https://headgate-replay.vercel.app) · Demo video (98 s): [youtu.be/OAmQfgiVWW8](https://youtu.be/OAmQfgiVWW8)
 
+In a recorded live run, 390 of 400 payouts left on their cut-off with the checks running concurrently, versus 49 of 400 with the same agents run one loop at a time; both held all 8 planted takeovers ([results](#results-live-runs)).
+
 > Synthetic data only. Not financial advice. Nothing in this project moves money.
 
 ## What it does
 
-A creator marketplace pays its creators in one Black Friday payout batch. While the batch runs, requests to change a creator's payout account keep arriving by email and support ticket, and some of them are account takeovers ("send today's payment to ACCT-6885 instead", from a look-alike domain). Checking the inbox once before the batch, or checking messages one at a time, can end up paying the attacker or paying honest creators late.
+In this fictional scenario, a creator marketplace pays its creators in one Black Friday payout batch. While the batch runs, requests to change a creator's payout account keep arriving by email and support ticket, and some of them are account takeovers ("Could you send the payment due today to ACCT-6885 instead?", from a look-alike domain). Checking the inbox once before the batch, or checking messages one at a time, can end up paying the attacker or paying honest creators late.
 
-Headgate runs six agents at the same time on Mozaik while the batch is released chunk by chunk on a fixed bank cut-off clock. A gate in front of the release tool lets clean payouts leave on their cut-off and holds only the payouts whose account is in doubt, with the record rows that prove why (for example `data/master.csv#CR-0024` and `data/arrivals.csv#IN-0002`). An operator can then approve a hold, which pays the **verified account on file**, or reject it, which keeps the payout held. In this demo nothing moves.
+Headgate runs six agents at the same time on Mozaik while the batch is released chunk by chunk on a fixed bank cut-off clock. A gate in front of the release tool lets clean payouts leave on their cut-off and holds only the payouts whose account is in doubt, with the record rows that prove why (for example `data/master.csv#CR-0024` and `data/arrivals.csv#IN-0002`). An operator can then approve a hold, which pays the **verified account on file** instead of the requested one, or reject it, which keeps the payout held. In this demo nothing moves.
 
-Why this matters (public context, not a result of this project): the FBI's [2024 IC3 Annual Report](https://www.ic3.gov/AnnualReport/Reports/2024_IC3Report.pdf) lists 21,442 Business Email Compromise complaints and $2,770,151,146 in reported losses for 2024, and FBI IC3 alert [I-112525-PSA](https://www.ic3.gov/PSA/2025/PSA251125) reports more than 5,100 account-takeover complaints with losses above $262 million since January 2025.
+Why this matters (public context, not a result of this project): the [2024 Annual Report](https://www.ic3.gov/AnnualReport/Reports/2024_IC3Report.pdf) of the FBI Internet Crime Complaint Center (IC3) lists 21,442 Business Email Compromise complaints and $2,770,151,146 in reported losses for 2024, and FBI IC3 alert [I-112525-PSA](https://www.ic3.gov/PSA/2025/PSA251125) reports more than 5,100 account-takeover complaints with losses above $262 million since January 2025.
 
 ## Why concurrency matters here
 
 The bank cut-off does not wait. Messages arrive, the inbox has to be read, the next chunks audited and the records checked, all before each chunk's cut-off. Running those checks at the same time lets them share the deadline window; unfinished work can still cause a hold, and with the default fail policy the gate does not release a payout it is unsure about.
 
-The comparison is fair by construction: the one-loop-at-a-time baseline uses the **same agents, prompts, tools, gate and clock**. Before each release it reads newly arrived messages one by one until none is unread or the cut-off comes. At a cut-off, an unread message stops only the payouts of the creators it names; a message that names nobody stops nothing.
+The one-loop-at-a-time baseline uses the **same agents, prompts, tools, gate and clock**; only the scheduling differs. Before each release it reads newly arrived messages one by one until none is unread or the cut-off comes. At a cut-off, an unread message stops only the payouts of the creators it names; a message that names nobody stops nothing.
 
 ## One message, traced through the live run
 
@@ -27,7 +29,7 @@ From `runs/live/payout-change-t20/concurrent-20000/events.jsonl.gz` (event `seq`
 | time | what happened |
 |---|---|
 | 11.2 s | `IN-0002` arrives by email from `example-creat0rs.test` asking to pay today's payout to `ACCT-6885` [46] |
-| 14.6 s | Inbox reader links it to creator `CR-0024` (found by the handle in the message) with the requested account [83] |
+| 14.6 s | Inbox reader links it to creator `CR-0024` (the message gives only the creator's handle, not the id) with the requested account [83] |
 | 17.8 s | Policy checker: suspicious, `request_off_file` (ACCT-6885 is not in the creator's records) [129] |
 | 18.1 s | Source verifier: suspicious, the verified account in `master.csv#CR-0024` is ACCT-78808 [134] |
 | 20.0 s | Cut-off of chunk `CH-01`: the gate holds `PO-00024` [156] and releases the other 49 payouts of the chunk [157] |
@@ -51,12 +53,12 @@ TypeScript, Node 22, MIT licence. `@mozaik-ai/core` is pinned to `6.0.0`.
 - **Shared state:** a ledger on Mozaik `RuntimeState` (items, verdicts, holds, arrivals, links). Every write is an event in `runs/<id>/events.jsonl`.
 - **Gate:** a Mozaik `InterceptionHandler` on `release_chunk`. For each chunk it collects the audit, the reading of the arrivals so far and the verdicts of both checkers on linked or flagged items; at the chunk's cut-off it releases the clear payouts and holds the rest. Holds made at a cut-off are closed later: confirmed with evidence, cleared and paid late, or left held with a written reason.
 - **Citation check:** a hold notice is refused if it contains a number that no tool output of the same loop contains; after three refusals the gate writes the notice from the recorded sources.
-- **Rules learned from measuring Mozaik 6.0.0** (`docs/design/MOZAIK_6_NOTES.md`): one task is one `runLoop` with a fresh `ModelContext` (two loops on one agent memory mixed their messages); every inference runner is wrapped so a throw becomes an `inference.failed` event; live runs use OpenRouter through Mozaik's `OpenAIChatCompletions`, because the built-in Gemini endpoint failed on the second tool round trip in our test with 6.0.0.
+- **Rules learned from measuring Mozaik 6.0.0** (`docs/design/MOZAIK_6_NOTES.md`): one task is one `runLoop` with a fresh `ModelContext` (two loops on one agent memory mixed their messages); every inference runner is wrapped so a throw becomes an `inference.failed` event; live runs use OpenRouter through Mozaik's `OpenAIChatCompletions` endpoint (the notes say why).
 - **Second scenario, same skeleton:** `double-pledge`, a fictional invoice-financing marketplace with three lenders, where the same receivable is submitted to two lenders (altered copy), is already pledged in a registry, or is missing from the debtor's ledger. Different agents (Intake, Fingerprinter, RegistryChecker, DebtorChecker), gated tool `fund_batch`. The payout scenario is the headline; this one shows the gate is not tied to one problem.
 
 ## Results (live runs)
 
-Recorded on 2026-11-26 with `deepseek/deepseek-v4.1-flash-1017` through OpenRouter, demo scale, 20-second cut-off per chunk.
+Recorded on 2026-11-26 with `deepseek/deepseek-v4.1-flash-1017` through OpenRouter, demo scale, a simulated 20-second bank cut-off per chunk.
 
 | | Payouts, concurrent | Payouts, one loop at a time | Invoice financing, concurrent | Invoice financing, one loop at a time |
 |---|---|---|---|---|
@@ -71,10 +73,10 @@ Recorded on 2026-11-26 with `deepseek/deepseek-v4.1-flash-1017` through OpenRout
 | notices refused by the citation check / written by code after 3 refusals | 10 / 2 | 1 / 0 | 24 / 2 | 23 / 4 |
 | run folder (summary.json, events.jsonl.gz) | `runs/live/payout-change-t20/concurrent-20000` | `…/sequential-20000` | `runs/live/double-pledge-t20/concurrent-20000` | `…/sequential-20000` |
 
-- These are single recorded runs, not averages. A refused notice is the citation check working (for example the model converted cents to euros itself), not a failed call.
+- These are single recorded runs, not averages. A refused notice contained a number that no tool output of its loop contained (for example the model converted cents to euros itself); it is not a failed model call.
 - In the payouts concurrent run, one planted takeover (`PO-00270`) was held at its cut-off and stayed held with the reason "Inbox triage did not complete for IN-0011": held, but not fully investigated.
-- The four live runs together cost at most USD 0.21 (provider key usage before and after; the key is shared with other work, so this is an upper bound).
-- A scripted sweep (simulated think time, so it shows the mechanism, not performance) varies the cut-off interval: at 300 ms one loop at a time paid 49 of 400 on time and the concurrent run 392; from 1,000 ms both kept up. On the unseen full set (2,000 payouts, 24 planted) the scripted concurrent run held 24 of 24.
+- The four live runs together cost at most USD 0.21 (an upper bound measured from provider key usage before and after the runs).
+- A scripted sweep (simulated think time, so it shows the mechanism, not performance) varies the cut-off interval: at 300 ms one loop at a time paid 49 of 400 on time and the concurrent run 392; from 1,000 ms both kept up. On the larger full set, which was not used while building (2,000 payouts, 24 planted), the scripted concurrent run held 24 of 24.
 
 ## Run it
 
@@ -91,6 +93,7 @@ npm test                     # 114 tests at the time of writing
 Reproduce the live comparison (needs a key; our four live runs together cost at most USD 0.21, and your cost depends on your provider and model):
 
 ```sh
+# --ticks is the cut-off interval per chunk in ms (20000 = 20 s)
 OPENROUTER_API_KEY=... npm run sweep -- --scenario payout-change --scale demo --ticks 20000 \
   --inference live --provider openrouter --model deepseek/deepseek-v4.1-flash-1017 --out runs/my-live
 ```
@@ -111,21 +114,21 @@ npm run web:build && npx vite preview --config web/vite.config.ts
 
 ## For other agents: the MCP door
 
-An AI agent about to pay a batch can ask the gate first. `npm run mcp:start` starts a stdio MCP server with three tools: `check_payout_batch` (returns held items with their source rows), `explain_hold` (verdicts, notice, sources) and `get_run_summary`. "Call check_payout_batch before releasing a payout batch; do not release items it returns as held." It uses scripted inference only, accepts no credentials and writes only to an OS temp folder. `npm run mcp:example` starts it and calls it; client configuration is in [`mcp/README.md`](mcp/README.md).
+An AI agent about to pay a batch can ask the gate first (MCP = Model Context Protocol; here it runs on the synthetic demo data only). `npm run mcp:start` starts a stdio MCP server with three tools: `check_payout_batch` (returns held items with their source rows), `explain_hold` (verdicts, notice, sources) and `get_run_summary`. "Call check_payout_batch before releasing a payout batch; do not release items it returns as held." It uses scripted inference only, accepts no credentials and writes only to an OS temp folder. `npm run mcp:example` starts it and calls it; client configuration is in [`mcp/README.md`](mcp/README.md).
 
 ## Data and honesty
 
 - Data is synthetic, generated from a fixed seed and frozen in `data/`: the payout demo has 400 payouts, 30 arriving messages, 8 planted takeovers and 12 legitimate look-alikes (the full set: 2,000, 120, 24 and 60). Account references are `ACCT-` followed by 4 or 5 digits, emails end in `.test`, names are fictional. The planted labels are read only by the evaluator (`src/eval/`), never by the agents.
-- Numbers are computed by tools and returned with a source row; the hold notices that agents write are checked so that they can only repeat numbers a tool returned. Every number in the results above comes from a committed run log.
+- Numbers are computed by tools and returned with a source row; the hold notices that agents write are checked so that they can only repeat numbers a tool returned. Every count and timing in the results above comes from a committed run log; the cost bound comes from provider key usage.
 - Not financial advice. Nothing moves money.
 
 ## Limits
 
-- Mozaik Cloud (the hosted live view) is not connected; it needs an account and is not required to run anything.
+- Mozaik Cloud (the hosted live view) is not connected; every run is recorded to a local event log instead (`runs/<id>/events.jsonl`).
 - A model can fail to finish reading a message before the cut-off; the gate then holds the named creator's payout and says why.
 - The citation check is strict and can refuse a correct number the model derived itself; the notice is then written by code from the sources.
-- Scripted think time is simulated; only the live table supports claims about time and cost.
+- Scripted think time is simulated; only the live runs support claims about time.
 
 ## How it was built
 
-Built during the JigJoy Black Friday AI Hackathon (from 2026-11-26 10:00 CET) with AI assistance, which the rules allow: the design seams (`docs/design/SEAMS.md`, `src/core/types.ts`) and the measurements of Mozaik 6.0.0 were written first, and coding agents implemented against them; the frozen evaluation sets were built by a separate job before the runtime. Direct dependencies: `@mozaik-ai/core` (MIT), `@modelcontextprotocol/sdk` (MIT), `zod` (MIT). The replay site bundles no third-party code (`web/dist/THIRD_PARTY_NOTICES.txt`).
+Built during the JigJoy Black Friday AI Hackathon (from 2026-11-26 10:00 CET) with AI assistance: the interfaces (`docs/design/SEAMS.md`, `src/core/types.ts`) and the measurements of Mozaik 6.0.0 were written first, coding agents implemented against them, and the frozen evaluation sets were built by a separate job before the runtime existed. Direct dependencies: `@mozaik-ai/core` (MIT), `@modelcontextprotocol/sdk` (MIT), `zod` (MIT). The replay site bundles no third-party packages (`web/dist/THIRD_PARTY_NOTICES.txt`).
