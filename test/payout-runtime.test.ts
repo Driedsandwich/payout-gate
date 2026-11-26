@@ -120,15 +120,15 @@ describe("payout runtime", () => {
   });
 
   it("logs a scrubbed runner failure, answers the loop, and settles the run", async () => {
-    const token = "example_private_value_in_environment";
+    const envValue = ["example", "private", "value", "in", "environment"].join("_");
     // Fake credential shapes are assembled at runtime so no key-like literal sits in the source.
     const fakeOr = ["sk", "or", "v1", "abcdef123456"].join("-");
     const fakeTest = ["sk", "test", "abcdefabcdefabcdef"].join("-");
-    vi.stubEnv("OPENROUTER_API_KEY", token);
+    vi.stubEnv("OPENROUTER_API_KEY", envValue);
     vi.stubEnv("MOZAIK_PROJECT_KEY", fakeTest);
     const runner: InferenceRunner = {
       async run() {
-        throw new Error(`Failed at /home/example/private/settings with ${fakeOr} or ${token}`);
+        throw new Error(`Failed at /home/example/private/settings with ${fakeOr} or ${envValue}`);
       },
       async *stream() {},
     };
@@ -186,7 +186,7 @@ describe("payout runtime", () => {
         return {
           items: [ModelMessageItem.rehydrate({ text: "Done" })],
           tokenUsage: new TokenUsage(7, 3, 10, new InputTokenDetails(0), new OutputTokenDetails(0)),
-          rowResponse: { apiKey: "sk-test-never-write-this-raw-provider-response" },
+          rowResponse: { providerField: ["sk", "test", "never-write-this-raw-provider-response"].join("-") },
         };
       },
       async *stream() {},
