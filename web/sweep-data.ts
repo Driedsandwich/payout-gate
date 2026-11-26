@@ -8,5 +8,6 @@ export type SweepPoint = Pick<RunSummary, "mode" | "tickMs" | "released" | "plan
 
 export interface CutoffSweep {
   note?: string;
+  started?: Pick<RunSummary, "scenarioId" | "inference">;
   rows: SweepPoint[];
 }

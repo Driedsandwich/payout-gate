@@ -13,7 +13,7 @@ body {
   padding: 14px 22px 20px;
 }
 h1, h2, h3, h4, p, ul, dl, dd, pre, blockquote { margin: 0; }
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .62; }
 a { color: inherit; text-underline-offset: .17em; }
@@ -48,7 +48,17 @@ h1 {
   line-height: 1.05;
   letter-spacing: -.045em;
 }
-.toolbar { gap: 18px; }
+.toolbar { gap: 18px; flex-wrap: wrap; justify-content: flex-end; }
+.scenario-switch { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.scenario-switch label { color: var(--text-muted); font-weight: 650; }
+.scenario-switch select {
+  min-height: 35px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  font-weight: 750;
+}
 .playback { gap: 14px; }
 .play {
   min-width: 106px;
@@ -91,9 +101,10 @@ h1 {
 .headline {
   font-size: clamp(16px, 1.48vw, 22px);
   letter-spacing: -.017em;
-  margin: 5px 0 12px;
+  margin-top: 5px;
 }
 .headline strong { font-weight: 800; }
+.provenance { margin: 4px 0 12px; color: var(--text-muted); font-size: 14px; }
 
 .overview {
   display: grid;
@@ -164,6 +175,12 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+#selection-reason {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .timeline { margin-top: 18px; }
@@ -464,23 +481,27 @@ footer {
 }
 
 #compare-view { margin-top: 19px; }
-.compare-summary {
-  margin-top: 17px;
+.live-results, .sweep-results {
   display: grid;
-  grid-template-columns: minmax(350px, .82fr) minmax(0, 1fr);
-  gap: 26px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+  align-items: start;
+  gap: 18px;
 }
-.compare-summary h3 { font-size: 23px; letter-spacing: -.03em; }
+.live-results .metrics { margin-top: 0; }
+#cutoff-sweep { margin-top: 16px; padding-top: 9px; border-top: 1px solid var(--border); }
+#cutoff-sweep h3 { font-size: 23px; letter-spacing: -.03em; }
 .metrics {
   margin-top: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
   table-layout: fixed;
 }
-.metrics th, .metrics td { padding: 7px 14px; }
+.metrics th, .metrics td { padding: 4px 14px; }
+.live-results .metrics th, .live-results .metrics td { padding-block: 3px; font-size: 15px; line-height: 1.35; }
 .metrics th:first-child { width: 46%; }
 .metrics td, .metrics thead th:not(:first-child) { text-align: center; }
 .metrics td { font-weight: 700; }
+.unresolved-reason { color: var(--text-muted); font-size: 13px; font-weight: 500; }
 .compare-note {
   margin-top: 3px;
   color: var(--text-muted);
@@ -499,7 +520,7 @@ footer {
 .sweep-caption { justify-content: space-between; flex-wrap: wrap; gap: 2px 14px; }
 .sweep-legend { list-style: none; flex-wrap: wrap; padding: 0; gap: 4px 12px; font-size: 13px; }
 .sweep-legend li { gap: 4px; }
-.sweep-plot { display: block; width: 100%; height: 151px; }
+.sweep-plot { display: block; width: 100%; height: 129px; }
 .sweep-plot text { fill: var(--text-muted); font: 13px var(--mono); }
 .sweep-grid { stroke: var(--border); }
 .sweep-line {
@@ -515,28 +536,27 @@ footer {
 }
 .concurrent .sweep-point { fill: var(--surface); stroke: var(--decision-1); stroke-width: 2; }
 .sequential .sweep-point { fill: var(--decision-2); }
-.sweep-table th, .sweep-table td { padding: 2px 7px; font-size: 13px; }
+.sweep-table th, .sweep-table td { padding: 2px 7px; font-size: 13px; line-height: 1.27; }
 .sweep-table th:first-child { width: 14%; }
 .sweep-table th:nth-child(2) { width: 20%; }
 .sweep-table th:nth-child(3) { width: 13%; }
 .sweep-table tbody tr:nth-child(4n + 3), .sweep-table tbody tr:nth-child(4n + 4) { background: var(--background); }
-.compare-heading { margin: 16px 0 8px; }
-.compare-heading h2 { font-size: clamp(28px, 2.5vw, 36px); }
+.compare-heading { margin-bottom: 8px; }
+.compare-heading h3 { font-size: clamp(24px, 2vw, 30px); letter-spacing: -.04em; }
 .compare-heading p { font-size: 13px; color: var(--text-muted); }
 .compare-charts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 10px 18px;
 }
 .compare-chart h3 { font-size: 19px; }
 .compare-chart-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .compare-chart-header a { font-size: 14px; }
 .chart.compact {
   --label-width: 128px;
-  --row-height: 24px;
+  --row-height: 20px;
   min-width: 0;
 }
-.compact .chart-axis { height: 28px; }
+.compact .chart-axis { height: 23px; }
 .compact .tick-label { bottom: 5px; font-size: 11px; }
 .compact .tick-label:last-child { transform: translateX(-100%); }
 .compact .lane-label { font-size: 12px; padding-left: 7px; }
@@ -638,9 +658,11 @@ blockquote {
   .overview { grid-template-columns: 1fr; gap: 10px; }
   .stats { border-right: 0; padding-right: 0; }
   .selection { min-height: 76px; }
+  .live-results { grid-template-columns: minmax(0, 1fr); }
+  .compare-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 860px) {
-  .compare-summary { grid-template-columns: minmax(0, 1fr); gap: 17px; }
+  .sweep-results { grid-template-columns: minmax(0, 1fr); gap: 5px; }
 }
 
 @media (max-width: 665px) {
@@ -648,13 +670,14 @@ blockquote {
   .page-header { align-items: stretch; flex-direction: column; gap: 12px; }
   h1 { font-size: clamp(26px, 7vw, 34px); }
   .toolbar { justify-content: space-between; gap: 9px; }
+  .scenario-switch { width: 100%; }
   .playback { flex: 1; gap: 8px; }
   .play { min-width: 79px; padding-inline: 5px; font-size: 14px; }
   .scrubber { flex: 1; }
   #time { width: 100%; min-width: 60px; }
   .view-link { font-size: 14px; padding-left: 9px; }
   #scenario-title { margin-top: 22px; }
-  .headline { margin: 6px 0 13px; }
+  .headline { margin-top: 6px; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat { min-height: 66px; padding: 7px 10px; }
   .selection h2 { font-size: 17px; }
@@ -688,6 +711,7 @@ blockquote {
   .holds-table .text-button { white-space: normal; }
   .compare-charts { grid-template-columns: 1fr; }
   .metrics th, .metrics td { padding: 6px 7px; font-size: 13px; }
+  .live-results .metrics th, .live-results .metrics td { padding-block: 6px; font-size: 13px; }
   .sweep-table th, .sweep-table td { padding: 4px 3px; font-size: 11px; }
   .sweep-table th:nth-child(2) { width: 21%; }
   .sweep-table th:nth-child(3) { width: 14%; }

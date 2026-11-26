@@ -44,7 +44,18 @@ export interface ScenarioWords {
 }
 
 export type HoldOutcome = NonNullable<Hold["outcome"]>;
-export type HoldResolution = Timed<{ outcome: HoldOutcome; reasons: string[]; sources: string[]; citations: SourceRef[] }>;
+export type HoldResolution = Timed<{
+  outcome: HoldOutcome | "unresolved";
+  reasons: string[];
+  sources: string[];
+  citations: SourceRef[];
+}>;
+
+export type NoticeCheck = Timed<
+  { outcome: "accepted" }
+  | { outcome: "rejected"; numbers: string[] }
+  | { outcome: "fallback"; attempts: number }
+>;
 
 export interface HeldItem {
   itemId: string;
@@ -62,7 +73,8 @@ export interface HeldItem {
   sources: string[];
   citations: SourceRef[];
   verdicts: Timed<Verdict>[];
-  notices: Timed<{ text: string; origin?: "cutoff" | "resolution" }>[];
+  notices: Timed<{ text: string; origin?: "cutoff" | "resolution" | "fallback" }>[];
+  noticeChecks: NoticeCheck[];
   resolution?: HoldResolution;
 }
 
@@ -71,6 +83,9 @@ export interface ReplayRun {
   scenarioTitle: string;
   words: ScenarioWords;
   summary: RunSummary;
+  started: { inference: string; tickMs: number };
+  holdOutcomes: { confirmedLate: number; clearedLate: number };
+  modelLatencyMs: { median: number; p90: number } | null;
   duration: number;
   lanes: Lane[];
   ticks: ReleaseTick[];

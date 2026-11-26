@@ -1,11 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Hold, RunEvent, RunSummary, ScenarioData, SourceRef, Verdict, WorkItem } from "../../src/core/types.js";
+import type { Hold, RunSummary, ScenarioData, SourceRef, Verdict, WorkItem } from "../../src/core/types.js";
 import { readRunMetadata } from "../../src/eval/evaluate.js";
+import { countHoldOutcomes } from "../../src/eval/hold-outcomes.js";
 import { generate as generatePayouts } from "../../src/scenarios/payout-change/generate.js";
 import { generate as generatePledges } from "../../src/scenarios/double-pledge/generate.js";
 import type { GateDecision, GateWait, HeldItem, HoldResolution, Lane, ReplayRun, RowValues, ScenarioWords, Segment } from "../run-data.js";
+import { modelLatency } from "./model-latency.js";
+import { readRunEvents } from "./read-events.js";
 
 const generators = {
   "payout-change": generatePayouts,
@@ -33,6 +36,16 @@ const scenarios = {
 } satisfies Record<keyof typeof generators, { title: string; words: ScenarioWords; labels: Record<string, string> }>;
 
 type Request = { arrivalId: string; creatorId: string; requestedAccount: string };
+
+function jsonFields(text: string | undefined): Record<string, unknown> | undefined {
+  if (!text) return;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (value && typeof value === "object") return value as Record<string, unknown>;
+  } catch {
+    // A malformed tool call cannot be attributed to an item through its arguments.
+  }
+}
 
 function append<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   const list = map.get(key);
@@ -67,11 +80,10 @@ function sourceLookup(data: ScenarioData) {
 }
 
 export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
-  const [log, summaryFile] = await Promise.all([
-    readFile(join(runDirectory, "events.jsonl"), "utf8"),
+  const [events, summaryFile] = await Promise.all([
+    readRunEvents(runDirectory),
     readFile(join(runDirectory, "summary.json"), "utf8"),
   ]);
-  const events: RunEvent[] = log.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
   const summary: RunSummary = JSON.parse(summaryFile);
   const metadata = readRunMetadata(events);
   if (!Object.hasOwn(generators, metadata.scenarioId)) {
@@ -81,8 +93,10 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
   const generate = generators[scenarioId];
   const { title: scenarioTitle, words } = scenarios[scenarioId];
   const labels: Record<string, string> = scenarios[scenarioId].labels;
-  if (metadata.runId !== summary.runId || metadata.scenarioId !== summary.scenarioId) {
-    throw new Error("Run log and summary identify different runs");
+  const { scale, ...identity } = metadata;
+  if (Object.entries(identity).some(([key, value]) => summary[key as keyof RunSummary] !== value) ||
+      Object.entries(scale).some(([key, value]) => summary.scale[key as keyof RunSummary["scale"]] !== value)) {
+    throw new Error("Run log and summary have different metadata");
   }
   const data = generate(metadata.scale);
   const items = new Map(data.items.map((item) => [item.id, item]));
@@ -103,6 +117,8 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
   const holdDecisions = new Map<string, Extract<GateDecision, { type: "hold" }> & { citations: SourceRef[] }>();
   const verdicts = new Map<string, HeldItem["verdicts"]>();
   const notices = new Map<string, HeldItem["notices"]>();
+  const noticeChecks = new Map<string, HeldItem["noticeChecks"]>();
+  const noticeCalls = new Map<string, { itemId: string; callId: string }>();
   const requests = new Map<string, HeldItem["requests"]>();
 
   const laneFor = (agent: string) => {
@@ -111,7 +127,11 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
   };
 
   for (const { kind, agent, loopId, tMs: time, data: eventData, itemIds = [], sources = [] } of events) {
-    const payload = eventData?.payload as { role?: string; content?: unknown } | undefined;
+    const payload = eventData?.payload as {
+      role?: string; content?: unknown;
+      call?: { name: string; args: string; callId: string };
+      callId?: string; output?: { text?: string };
+    } | undefined;
     switch (kind) {
       case "participant.joined":
         if (agent && payload?.role === "agent") laneFor(agent);
@@ -130,6 +150,41 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
         if (segment) {
           segment.end = time;
           segments.delete(segment.loopId);
+        }
+        if (loopId) noticeCalls.delete(loopId);
+        break;
+      }
+      case "function_call.started": {
+        const call = payload?.call;
+        if (!loopId || call?.name !== "write_hold_notice") break;
+        const itemId = jsonFields(call.args)?.itemId;
+        if (typeof itemId === "string") noticeCalls.set(loopId, { itemId, callId: call.callId });
+        break;
+      }
+      case "function_call.completed": {
+        const call = loopId ? noticeCalls.get(loopId) : undefined;
+        if (loopId && call && call.callId === payload?.callId) {
+          noticeCalls.delete(loopId);
+          if (jsonFields(payload.output?.text)?.written === true) {
+            append(noticeChecks, call.itemId, { time, outcome: "accepted" });
+          }
+        }
+        break;
+      }
+      case "citation.reject": {
+        const call = loopId ? noticeCalls.get(loopId) : undefined;
+        const numbers = eventData?.numbers;
+        if (call && Array.isArray(numbers)) {
+          append(noticeChecks, call.itemId, { time, outcome: "rejected", numbers });
+        }
+        break;
+      }
+      case "citation.fallback": {
+        const { itemId, attempts } = eventData ?? {};
+        if (typeof itemId === "string" && typeof attempts === "number") {
+          append(noticeChecks, itemId, { time, outcome: "fallback", attempts });
+          const notice = notices.get(itemId)?.at(-1);
+          if (notice) notice.origin = "fallback";
         }
         break;
       }
@@ -150,6 +205,13 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
           const previous = resolutions.get(itemId);
           const citations = sources.length ? sources : previous?.citations ?? [];
           resolutions.set(itemId, { time, outcome, reasons: previous?.reasons ?? [], sources: cite(citations), citations });
+        }
+        break;
+      }
+      case "hold.unresolved": {
+        const { itemId, reason } = eventData ?? {};
+        if (typeof itemId === "string" && typeof reason === "string") {
+          resolutions.set(itemId, { time, outcome: "unresolved", reasons: [reason], sources: cite(sources), citations: sources });
         }
         break;
       }
@@ -186,6 +248,12 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
             if (row.outcome && !resolutions.has(rowId)) {
               const citations = row.sources ?? sources;
               resolutions.set(rowId, { time, outcome: row.outcome, reasons: row.reasons ?? [], sources: cite(citations), citations });
+            }
+            if (row.unresolvedReason && !resolutions.has(rowId)) {
+              const citations = row.sources ?? sources;
+              resolutions.set(rowId, {
+                time, outcome: "unresolved", reasons: [row.unresolvedReason], sources: cite(citations), citations,
+              });
             }
             if (row.notice && notices.get(rowId)?.at(-1)?.text !== row.notice) {
               const origin = row.outcome === "cleared_late" ? "resolution" : undefined;
@@ -241,12 +309,16 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
       requests: requests.get(item.subjectId) ?? [],
       timeout: decision?.timeout ?? false, reasons: decision?.reasons ?? row?.reasons ?? [],
       sources: [...new Set(sourceKeys)], citations, verdicts: itemVerdicts, notices: itemNotices,
+      noticeChecks: noticeChecks.get(itemId) ?? [],
       resolution: resolutions.get(itemId),
     };
   });
 
   return {
     scenarioId, scenarioTitle, words, summary, duration, lanes: [...lanes.values()],
+    started: { inference: metadata.inference, tickMs: metadata.tickMs },
+    holdOutcomes: countHoldOutcomes(events),
+    modelLatencyMs: modelLatency(events),
     ticks: data.chunks.map(({ id, tick, itemIds }) => ({ chunkId: id, tick, cutoff: tick * metadata.tickMs, itemIds })),
     waits, unread, decisions, arrivals, statuses, holds, sourceRows,
   };
@@ -254,16 +326,16 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  if (args.length === 0) throw new Error("Usage: npm run web:condense -- <run-id> [<run-id> ...]");
-  const output = new URL("../public/runs/", import.meta.url);
-  await mkdir(output, { recursive: true });
-  for (const id of args) {
-    if (!/^[\w-]+$/.test(id)) throw new Error(`Invalid run ID: ${id}`);
-    const directory = new URL(`../../runs/${id}/`, import.meta.url);
-    const run = await condenseRun(fileURLToPath(directory));
-    if (run.summary.runId !== id) throw new Error(`Unexpected run ID for ${id}`);
-    await writeFile(new URL(`${id}.json`, output), JSON.stringify(run) + "\n");
-    console.log(`Condensed ${id}: ${run.lanes.length} lanes, ${run.holds.length} holds.`);
+  if (args.length === 0) throw new Error("Usage: npm run web:condense -- <path under runs/> [...]");
+  for (const path of args) {
+    if (!/^[\w-]+(?:\/[\w-]+)*$/.test(path)) throw new Error(`Invalid run path: ${path}`);
+    const directory = fileURLToPath(new URL(`../../runs/${path}/`, import.meta.url));
+    const run = await condenseRun(directory);
+    if (run.summary.runId !== basename(path)) throw new Error(`Unexpected run ID for ${path}`);
+    const output = fileURLToPath(new URL(`../public/runs/${path}.json`, import.meta.url));
+    await mkdir(dirname(output), { recursive: true });
+    await writeFile(output, JSON.stringify(run) + "\n");
+    console.log(`Condensed ${path}: ${run.lanes.length} lanes, ${run.holds.length} holds.`);
   }
 }
 

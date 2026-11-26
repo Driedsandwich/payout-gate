@@ -14,6 +14,13 @@
         <p id="tagline"></p>
       </div>
       <nav class="toolbar" aria-label="Replay and comparison">
+        <div class="scenario-switch">
+          <label for="scenario">Scenario</label>
+          <select id="scenario">
+            <option value="payout-change">Payout change</option>
+            <option value="double-pledge">Double pledge</option>
+          </select>
+        </div>
         <div class="playback" id="playback">
           <button class="play" id="play" type="button">▶ Replay</button>
           <div class="scrubber">
@@ -30,6 +37,7 @@
       <div id="replay-view">
         <h2 id="scenario-title"></h2>
         <p class="headline" id="headline"></p>
+        <p class="provenance" id="replay-provenance"></p>
         <div class="overview">
           <dl class="stats" id="stats">
             <div class="stat">
@@ -83,7 +91,7 @@
           <div class="table-scroll" tabindex="0" role="region" aria-labelledby="holds-title">
             <table class="holds-table">
               <thead>
-                <tr><th scope="col" id="hold-subject"></th><th scope="col">Status</th><th scope="col">Outcome</th><th scope="col">Source rows</th><th scope="col"><span class="visually-hidden">Evidence</span></th></tr>
+                <tr><th scope="col" id="hold-subject"></th><th scope="col">At cut-off</th><th scope="col">Outcome</th><th scope="col">Source rows</th><th scope="col"><span class="visually-hidden">Evidence</span></th></tr>
               </thead>
               <tbody id="hold-rows"></tbody>
             </table>
@@ -92,26 +100,30 @@
       </div>
 
       <section id="compare-view" aria-labelledby="compare-title" hidden>
-        <h2 id="compare-title" tabindex="-1">Compare runs</h2>
-        <div class="compare-summary">
-          <section aria-labelledby="metrics-title">
-            <h3 id="metrics-title">Run summaries</h3>
-            <table class="metrics" aria-labelledby="metrics-title">
+        <h2 id="compare-title" tabindex="-1"></h2>
+        <p id="missing-comparison" hidden>Compare requires two runs with the same scenario, scale and cut-off interval.</p>
+        <div id="live-comparison">
+          <p class="provenance" id="compare-provenance"></p>
+          <div class="live-results">
+            <table class="metrics">
+              <caption class="visually-hidden">Live run results</caption>
               <thead>
                 <tr><th scope="col">Metric</th><th scope="col">Concurrent</th><th scope="col">Sequential</th></tr>
               </thead>
               <tbody id="metrics-rows"></tbody>
             </table>
-          </section>
-          <section id="cutoff-sweep" aria-labelledby="sweep-title">
-            <h3 id="sweep-title">Cut-off sweep</h3>
-          </section>
+            <section class="live-timelines" aria-labelledby="compare-timelines-title">
+              <div class="compare-heading">
+                <h3 id="compare-timelines-title">Agent timelines</h3>
+                <p>Both runs share an elapsed-time scale. The dashed line marks the final cut-off.</p>
+              </div>
+              <div class="compare-charts" id="compare-charts"></div>
+            </section>
+          </div>
         </div>
-        <div class="section-heading compare-heading">
-          <h2>Agent timelines</h2>
-          <p>Both runs share an elapsed-time scale. The dashed line marks each run’s final cut-off.</p>
-        </div>
-        <div class="compare-charts" id="compare-charts"></div>
+        <section id="cutoff-sweep" aria-labelledby="sweep-title">
+          <h3 id="sweep-title">How the gap depends on the cut-off (scripted, mechanism only)</h3>
+        </section>
       </section>
       <details class="run-yourself" id="run-yourself">
         <summary>Run it yourself</summary>

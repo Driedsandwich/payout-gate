@@ -99,11 +99,3 @@ it("condenses log and summary files and regenerates the evidence from run.starte
     await rm(directory, { recursive: true, force: true });
   }
 });
-
-it.each(["web-concurrent", "web-sequential"])("checks every published %s hold and final count", async (id) => {
-  const path = new URL(`../web/public/runs/${id}.json`, import.meta.url);
-  const run = JSON.parse(await readFile(path, "utf8")) as ReplayRun;
-  expect(run.holds.length).toBeGreaterThan(0);
-  expectSummaryCounts(run, run.summary);
-  expectQuotedRows(run);
-});

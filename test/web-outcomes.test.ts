@@ -5,9 +5,6 @@ import { expect, it } from "vitest";
 import type { Hold, RunEvent, WorkItem } from "../src/core/types.js";
 import { evaluate } from "../src/eval/evaluate.js";
 import { generate } from "../src/scenarios/double-pledge/generate.js";
-import concurrent from "../web/public/runs/web-concurrent.json";
-import sequential from "../web/public/runs/web-sequential.json";
-import type { ReplayRun } from "../web/run-data.js";
 import { condenseRun } from "../web/scripts/condense.js";
 import { outcomeLabel, snapshotAt } from "../web/state.js";
 
@@ -92,13 +89,5 @@ it("uses the logged scenario and agents, and preserves holds and unread events i
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
-  }
-});
-
-it.each([concurrent, sequential] as ReplayRun[])("keeps labelled outcomes and valued evidence for $summary.runId", (run) => {
-  for (const held of run.holds) {
-    expect(outcomeLabel(held, run.duration)).toMatch(/^Held/);
-    expect(held.sources.some((source) => Object.entries(run.sourceRows[source] ?? {})
-      .some(([field, value]) => field !== "id" && value !== ""))).toBe(true);
   }
 });

@@ -82,7 +82,8 @@ export function showEvidence(
   if (resolution?.reasons.length) {
     const review = element("ul");
     review.append(...resolution.reasons.map((reason) => element("li", "", reason)));
-    gate.append(element("p", "mono resolution-time", `Reviewed at ${seconds(resolution.time, 2)} elapsed`), review);
+    const action = resolution.outcome === "unresolved" ? "Unresolved after review" : "Reviewed";
+    gate.append(element("p", "mono resolution-time", `${action} at ${seconds(resolution.time, 2)} elapsed`), review);
   }
 
   const verdictBlock = section("Agent verdicts");
@@ -110,10 +111,25 @@ export function showEvidence(
   const recorded = hold.notices.filter((entry) => entry.time <= time);
   for (const entry of recorded) {
     const label = entry.origin === "cutoff" ? "Gate notice at cut-off"
-      : entry.origin === "resolution" ? "Gate notice after review" : "Explainer notice";
+      : entry.origin === "resolution" ? "Gate notice after review"
+      : entry.origin === "fallback" ? "Fallback notice written by code" : "Explainer notice";
     notice.append(element("h4", "", label), element("blockquote", "", entry.text));
   }
   if (!recorded.length) notice.append(element("p", "", "No hold notice had been recorded at this point."));
+  const checks = hold.noticeChecks.filter((entry) => entry.time <= time);
+  if (checks.length) {
+    const list = element("ul");
+    for (const check of checks) {
+      let detail: string;
+      switch (check.outcome) {
+        case "accepted": detail = "Explainer notice accepted."; break;
+        case "rejected": detail = `Attempt rejected for unsupported values (${check.numbers.join(", ")}).`; break;
+        case "fallback": detail = `Code wrote the fallback notice after ${check.attempts} ${check.attempts === 1 ? "attempt" : "attempts"}.`; break;
+      }
+      list.append(element("li", "", detail));
+    }
+    notice.append(element("h4", "", "Citation outcomes"), list);
+  }
 
   const evidence = section("Source rows");
   evidence.append(sourceRows(

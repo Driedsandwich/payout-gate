@@ -80,7 +80,8 @@ export function renderSweep(section: HTMLElement, sweep: CutoffSweep) {
     item.append(key, labels[mode]);
     legend.append(item);
   }
-  caption.append(element("strong", "", "Payouts paid on time"), legend);
+  const metric = sweep.started?.scenarioId === "payout-change" ? "Black Friday payouts paid on time" : "Payouts paid on time";
+  caption.append(element("strong", "", metric), legend);
   figure.append(caption, chartFor(sweep.rows));
 
   const table = element("table", "metrics sweep-table");
@@ -102,5 +103,7 @@ export function renderSweep(section: HTMLElement, sweep: CutoffSweep) {
     );
   }
   if (sweep.note) section.append(element("p", "compare-note", sweep.note));
-  section.append(figure, table);
+  const results = element("div", "sweep-results");
+  results.append(figure, table);
+  section.append(results);
 }

@@ -18,6 +18,7 @@
     "mcp:start": "node --import tsx mcp/server.ts",
     "mcp:example": "node --import tsx mcp/example-client.ts",
     "web:condense": "tsx web/scripts/condense.ts",
+    "web:condense-live": "npm run web:condense -- live/payout-change-t20/concurrent-20000 live/payout-change-t20/sequential-20000 live/double-pledge-t20/concurrent-20000 live/double-pledge-t20/sequential-20000",
     "web:condense-sweep": "tsx web/scripts/condense-sweep.ts",
     "web:build": "tsc -p web/tsconfig.json --noEmit && vite build --config web/vite.config.ts"
   },

@@ -9,6 +9,7 @@ export function outcomeLabel(hold: HeldItem, time: number): string {
   switch (resolutionAt(hold, time)?.outcome) {
     case "confirmed": return "Held at cut-off → confirmed";
     case "cleared_late": return "Held at cut-off → cleared, paid late";
+    case "unresolved": return "Held at cut-off → unresolved";
     default: return "Held at cut-off";
   }
 }
