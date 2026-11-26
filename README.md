@@ -49,7 +49,7 @@ TypeScript, Node 22, MIT licence. `@mozaik-ai/core` is pinned to `6.0.0`.
 | Hold explainer (`Explainer`) | Writes hold notices | Every number must appear in a tool output of the same loop |
 
 - **Shared state:** a ledger on Mozaik `RuntimeState` (items, verdicts, holds, arrivals, links). Every write is an event in `runs/<id>/events.jsonl`.
-- **Gate:** a Mozaik `InterceptionHandler` on `release_chunk`. It waits per chunk until the chunk is audited, the arrivals so far are read and the linked or flagged items have verdicts from both checkers, or until the cut-off. Holds made at a cut-off are closed later: confirmed with evidence, cleared and paid late, or left held with a written reason.
+- **Gate:** a Mozaik `InterceptionHandler` on `release_chunk`. For each chunk it collects the audit, the reading of the arrivals so far and the verdicts of both checkers on linked or flagged items; at the chunk's cut-off it releases the clear payouts and holds the rest. Holds made at a cut-off are closed later: confirmed with evidence, cleared and paid late, or left held with a written reason.
 - **Citation check:** a hold notice is refused if it contains a number that no tool output of the same loop contains; after three refusals the gate writes the notice from the recorded sources.
 - **Rules learned from measuring Mozaik 6.0.0** (`docs/design/MOZAIK_6_NOTES.md`): one task is one `runLoop` with a fresh `ModelContext` (two loops on one agent memory mixed their messages); every inference runner is wrapped so a throw becomes an `inference.failed` event; live runs use OpenRouter through Mozaik's `OpenAIChatCompletions`, because the built-in Gemini endpoint failed on the second tool round trip in our test with 6.0.0.
 - **Second scenario, same skeleton:** `double-pledge`, a fictional invoice-financing marketplace with three lenders, where the same receivable is submitted to two lenders (altered copy), is already pledged in a registry, or is missing from the debtor's ledger. Different agents (Intake, Fingerprinter, RegistryChecker, DebtorChecker), gated tool `fund_batch`. The payout scenario is the headline; this one shows the gate is not tied to one problem.
@@ -88,7 +88,7 @@ npm run demo:pledge          # second scenario
 npm test                     # 94 tests at the time of writing
 ```
 
-Reproduce the live comparison (needs a key; costs a few cents):
+Reproduce the live comparison (needs a key; our four live runs together cost at most USD 0.21, and your cost depends on your provider and model):
 
 ```sh
 OPENROUTER_API_KEY=... npm run sweep -- --scenario payout-change --scale demo --ticks 20000 \
@@ -115,8 +115,8 @@ An AI agent about to pay a batch can ask the gate first. `npm run mcp:start` sta
 
 ## Data and honesty
 
-- Data is synthetic, generated from a fixed seed and frozen in `data/`: the payout demo has 400 payouts, 30 arriving messages, 8 planted takeovers and 12 legitimate look-alikes (the full set: 2,000, 120, 24 and 60). Account references are `ACCT-NNNN`, emails end in `.test`, names are fictional. The planted labels are read only by the evaluator (`src/eval/`), never by the agents.
-- Numbers are computed by tools and carry a source row; agents may only repeat them. Every number in the results above comes from a committed run log.
+- Data is synthetic, generated from a fixed seed and frozen in `data/`: the payout demo has 400 payouts, 30 arriving messages, 8 planted takeovers and 12 legitimate look-alikes (the full set: 2,000, 120, 24 and 60). Account references are `ACCT-` followed by 4 or 5 digits, emails end in `.test`, names are fictional. The planted labels are read only by the evaluator (`src/eval/`), never by the agents.
+- Numbers are computed by tools and returned with a source row; the hold notices that agents write are checked so that they can only repeat numbers a tool returned. Every number in the results above comes from a committed run log.
 - Not financial advice. Nothing moves money.
 
 ## Limits
