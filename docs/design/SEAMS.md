@@ -114,3 +114,16 @@ Same gate rules, same baseline rule.
 Mozaik events keep their payload under `data.payload` (trimmed to what is JSON-safe) and their `loopId` in `loopId`.
 The final status of an item is the `after.status` of its last `ledger.write` on table `items`.
 A loop is active from its `message_received.started` to its `model.answer` or `inference.failed` (same `loopId`).
+
+## The agent-facing door (MCP)
+
+Other AI agents that are about to pay someone should be able to ask the gate first. `mcp/server.ts` is a stdio MCP server
+(`@modelcontextprotocol/sdk`) with these tools; every answer carries the SourceRefs behind it and the line "Not financial advice."
+
+| tool | input | output |
+|---|---|---|
+| `check_payout_batch` | `{ scenario?: "payout-change", scale?: "mini" \| "demo", batch?: WorkItem[], arrivals?: Arrival[], inference?: "scripted" }` | `{ runId, released: string[], held: [{ itemId, reasons, sources }], summary: RunSummary }` |
+| `explain_hold` | `{ runId, itemId }` | `{ itemId, notice, verdicts: Verdict[], sources: SourceRef[] }` |
+| `get_run_summary` | `{ runId }` | `RunSummary` |
+
+The server never takes credentials as tool input and defaults to scripted inference, so a caller cannot make it spend money.
