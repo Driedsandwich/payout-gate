@@ -3,8 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModelMessageItem, TokenUsage, InputTokenDetails, OutputTokenDetails, type InferenceRunner } from "@mozaik-ai/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventLog } from "../src/core/eventlog.js";
+import { Ledger } from "../src/core/ledger.js";
+import { createLoopRuntime } from "../src/core/loop-runtime.js";
 import { runScenario, type RunOptions } from "../src/core/orchestrator.js";
-import type { RunEvent } from "../src/core/types.js";
+import type { ScenarioRoles } from "../src/core/roles.js";
+import type { RunEvent, ScenarioPack } from "../src/core/types.js";
 import { payoutChangePack } from "../src/scenarios/payout-change/pack.js";
 import { payoutMini } from "./fixtures/payout-mini.js";
 
@@ -150,13 +154,18 @@ describe("payout runtime", () => {
   it.each(["hold", "release"] as const)("uses the %s fail policy when the chunk scan never arrives", async (failPolicy) => {
     const scripted = {
       ...pack.scripted,
-      next: (...args: Parameters<typeof pack.scripted.next>) =>
-        args[0] === "BatchAuditor" ? { answer: "Scan unavailable." } : pack.scripted.next(...args),
+      next: vi.fn((...args: Parameters<typeof pack.scripted.next>) =>
+        args[0] === "BatchAuditor" ? { answer: "Scan unavailable." } : pack.scripted.next(...args)),
     };
     const { ledger, events } = await run({ pack: { ...pack, scripted }, failPolicy, data: oneChunk(), tickMs: 100 });
     expect(ledger.items[0].status).toBe(failPolicy === "hold" ? "held" : "released");
     if (failPolicy === "hold") {
       expect(events.find(({ kind }) => kind === "gate.hold")?.data?.timeout).toBe(true);
+      expect(ledger.holds[0]).toMatchObject({
+        notice: expect.stringMatching(/payout is held for review.*Batch audit was unfinished at the release tick/),
+      });
+      expect(scripted.next.mock.calls.map(([agent]) => agent)).not.toContain("Explainer");
+      expect(events.some(({ agent, kind }) => agent === "Explainer" && kind === "message_received.started")).toBe(false);
       expect(events.find(({ kind }) => kind === "interception.finished")?.data?.payload)
         .toMatchObject({ nextStateId: "model_message" });
       expect(releasedByTool(events)).toEqual([]);
@@ -164,6 +173,89 @@ describe("payout runtime", () => {
       expect(events.some(({ kind }) => kind === "gate.hold")).toBe(false);
       expect(releasedByTool(events)).toEqual(["PO-00001"]);
     }
+  });
+
+  it("starts queued critical loops before older queued explanations and keeps the total cap", async () => {
+    const data = oneChunk();
+    const log = new EventLog("priority-test", out);
+    const ledger = new Ledger(data.items, log.nowMs, log.emit);
+    const scripted = { next: () => ({ answer: "Done." }), latencyMs: () => 5 };
+    const runtime = createLoopRuntime({
+      data, ledger, log, pack: { ...pack, scripted }, inference: { kind: "scripted" }, maxLoops: 1, explainer: "Explainer",
+    });
+    try {
+      runtime.join();
+      const blocker = runtime.run("BatchAuditor", {});
+      const queuedExplanation = runtime.run("Explainer", {});
+      const critical = ["InboxWatcher", "BatchAuditor", "RecordChecker", "PolicyAgent", "Dispatcher"];
+      await Promise.all([blocker, queuedExplanation, ...critical.map((agent) => runtime.run(agent, {}))]);
+      const events = (await readFile(log.path, "utf8")).trimEnd().split("\n").map((line) => JSON.parse(line) as RunEvent);
+      const starts = events.filter(({ kind }) => kind === "message_received.started").map(({ agent }) => agent);
+      expect(starts).toEqual(["BatchAuditor", ...critical, "Explainer"]);
+      expect(countLoops(events)).toBe(1);
+    } finally {
+      log.close();
+    }
+  });
+
+  it("links a creator by a signature handle and returns the sender domain mismatch with a citation", async () => {
+    const data = payoutMini();
+    const arrival = data.arrivals[0];
+    arrival.body = "From: support@example-creat0rs.test\n\nPlease send today's payment to ACCT-0999 instead.\n\nRegards,\n@Emi.";
+    arrival.subjectId = "CR-0001";
+    arrival.sources = [{ source: "data/arrivals.jsonl#IN-0001", field: "body", value: arrival.body }];
+    const seen = vi.fn(pack.scripted.next);
+    const { events } = await run({ data, pack: { ...pack, scripted: { ...pack.scripted, next: seen } } });
+    const output = seen.mock.calls.flatMap(([, , history]) => history).find(({ name }) => name === "find_creator")?.output;
+    expect(JSON.parse(output!)).toMatchObject({
+      creatorId: "CR-0005",
+      signals: [{
+        rule: "sender_domain_mismatch", senderDomain: "example-creat0rs.test", contactDomain: "example-creators.test",
+        sources: [{ source: "data/creators.csv#CR-0005", field: "contact_email", value: "emi@example-creators.test" }],
+      }],
+    });
+    const link = events.find(({ kind, data }) => kind === "ledger.write" && data?.table === "links" && data.rowId === arrival.id);
+    expect(link?.data?.after).toMatchObject({ creatorId: "CR-0005", requestedAccount: "ACCT-0999" });
+  });
+
+  it.each(["concurrent", "sequential"] as const)("runs a renamed pack in %s mode using its declared roles", async (mode) => {
+    const roles: ScenarioRoles = {
+      dispatcher: "Sender", intake: "Reader", auditor: "Scanner", checkers: ["Verifier", "Rules"], explainer: "Writer",
+    };
+    const agentNames = [roles.dispatcher, roles.intake, roles.auditor, ...roles.checkers, roles.explainer];
+    const originalAgents = pack.agents();
+    const originals = new Map(agentNames.map((name, index) => [name, originalAgents[index].name]));
+    const template = payoutMini();
+    const item = { ...template.items[4], chunkId: "CH-01" };
+    const data = {
+      ...template, scenarioId: "renamed", items: [item], labels: [], arrivals: [template.arrivals[0]],
+      chunks: [{ ...template.chunks[0], itemIds: [item.id] }],
+    };
+    const dummy = {
+      ...pack, id: "renamed", roles, requiredVerdicts: [roles.auditor], generate: () => data,
+      agents: () => originalAgents.map((agent, index) => ({ ...agent, name: agentNames[index], trigger: "start" as const })),
+      scripted: {
+        next: (agent, task, history) => pack.scripted.next(originals.get(agent)!, task, history),
+        latencyMs: () => 5,
+      },
+    } satisfies ScenarioPack & { roles: ScenarioRoles };
+    const { events, ledger } = await run({ data, mode, pack: dummy, tickMs: 180 });
+    const starts = events.filter(({ kind }) => kind === "message_received.started").map(({ agent }) => agent);
+    expect(new Set(starts)).toEqual(new Set(agentNames));
+    expect(events.find(({ kind }) => kind === "gate.hold")).toMatchObject({
+      agent: roles.dispatcher, data: { timeout: false },
+    });
+    expect(ledger.verdicts.filter(({ by }) => roles.checkers.includes(by)).map(({ by }) => by).sort())
+      .toEqual([...roles.checkers].sort());
+    expect(events.find(({ kind, agent }) => kind === "ledger.write" && agent === roles.explainer)?.data?.after)
+      .toHaveProperty("notice");
+  });
+
+  it("still accepts packs that use triggers and requiredVerdicts without a roles map", async () => {
+    const { roles: _roles, ...legacyPack } = pack;
+    const { ledger, events } = await run({ data: oneChunk(), pack: legacyPack, tickMs: 100 });
+    expect(ledger.items[0].status).toBe("released");
+    expect(events.find(({ kind }) => kind === "gate.pass")?.agent).toBe("Dispatcher");
   });
 
   it("runs the sequential baseline with at most one active loop", async () => {

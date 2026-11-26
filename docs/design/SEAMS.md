@@ -9,7 +9,7 @@ A fictional creator marketplace pays thousands of creators in one Black Friday p
 While the batch is running, requests to change a creator's payout account keep arriving (email, support tickets, in-app).
 Some are account takeovers. Six agents run at the same time on Mozaik: one releases payouts chunk by chunk,
 the others read the inbox, check the source records, audit the batch ahead of release, apply the payout policy and
-explain every hold. A gate (Mozaik `InterceptionHandler`) sits in front of the release tool: clean payouts keep flowing,
+explain verdict-based holds. A gate (Mozaik `InterceptionHandler`) sits in front of the release tool: clean payouts keep flowing,
 a payout whose account is in doubt is held with the rows that prove why. The same agents run one loop at a time
 (the sequential baseline) to measure what concurrency changes. All data is synthetic; nothing moves money.
 
@@ -48,8 +48,11 @@ Labels (`Label[]`) are produced by the generator and used only by `src/eval/`. A
 | BatchAuditor | chunk (runs ahead of the Dispatcher) | `scan_chunk(chunkId)` → rows whose destination differs from the last verified account or changed recently | verdicts on flagged items |
 | RecordChecker | linked request or audit flag | `get_master(creatorId)`, `get_change_log(creatorId)`, `submit_verdict(itemId, value, reason, sources)` | verdicts |
 | PolicyAgent | linked request or audit flag | `policy_check(itemId)` → rule hits computed by code (amount vs 90-day median, account age, channel) with sources, `submit_verdict` | verdicts |
-| Explainer | hold | `get_hold_facts(itemId)`, `write_hold_notice(itemId, text)` | hold notice (citation-checked) |
+| Explainer | verdict-based hold | `get_hold_facts(itemId)`, `write_hold_notice(itemId, text)` | hold notice (citation-checked) |
 | OpsReviewer (Human participant) | hold | approves or rejects a hold (scripted in the demo) | hold.resolvedBy |
+
+Packs can declare their dispatcher, intake, auditor, checkers, and explainer in the optional `roles` map on
+`ScenarioPackWithRoles`. Packs without the map use their agent triggers and `requiredVerdicts`.
 
 ### Gate (the `InterceptionHandler` on `release_chunk`)
 
@@ -60,14 +63,16 @@ Before `release_chunk(CH-k)` runs, the gate emits `gate.wait` and waits (at most
 
 Then it rewrites the call: clear items are released, suspicious items are held (`gate.hold` with reasons + sources).
 When tick `k` comes and an item is still uncertain, the product policy is `--fail-policy hold` (held, paid late, counted in
-`heldByTimeout`). `--fail-policy release` exists only to measure what an unchecked release would have paid out.
+`heldByTimeout`). The gate writes a notice listing the pending work at the tick when it holds a payout for review.
+`--fail-policy release` exists only to measure what an unchecked release would have paid out.
 The wait is per chunk, so the rest of the batch keeps flowing.
 
 ### Sequential baseline (`--mode sequential`)
 
 The same agents, tools, prompts and gate, but only one loop runs at a time, in this order per chunk:
 InboxWatcher for each arrival received so far → RecordChecker and PolicyAgent for each linked/flagged item → BatchAuditor scan → Dispatcher release.
-Arrivals that land while these steps run are only seen at the next chunk. The same release clock and the same fail policy apply,
+Arrivals that land while these steps run are only seen at the next chunk. The baseline writes verdict-based explanations
+after the release rounds and the final inbox and evidence review. The same release clock and the same fail policy apply,
 so a sequential run that cannot keep up shows it as late payouts (`hold`) or paid-out takeovers (`release`). Nothing else is weakened.
 
 ## Scenario B: `double-pledge` (second)
@@ -82,6 +87,10 @@ Same gate rules, same baseline rule.
 
 - `runs/<run-id>/events.jsonl`: one `RunEvent` per line, `seq` strictly increasing. Mozaik events are copied with their type.
 - `runs/<run-id>/summary.json`: a `RunSummary`; every number is computed from the log and the labels by `src/eval/`.
+- `npm run sweep -- --scale demo --ticks 500,1000,1500,3000,6000 --out runs/payout-sweep` runs both modes per tick length
+  on the same data. Each `<mode>-<tick>` folder has its own log and summary. `sweep.json` contains the table under `rows`
+  and the simulated-latency notice under `note` in scripted mode. For live inference, pass `--inference live --provider`
+  and `--model` with their values. Use `--scale mini` for the mini fixture.
 - Scripted think time is simulated so the timeline shows overlap. It is never reported as performance.
   Only live runs (real model, wall clock) are used for any time or cost claim.
 - Never write API keys, absolute local paths or personal data into logs.
@@ -92,7 +101,8 @@ Same gate rules, same baseline rule.
 - `live`: provider from `--provider` (`openrouter` uses Mozaik's `OpenAIChatCompletions` with base URL `https://openrouter.ai/api/v1`;
   `anthropic` and `openai` use Mozaik's built-in endpoints). Keys come only from the environment variables
   `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and are never logged or written to disk.
-- Live runs cap concurrent loops with `--max-loops` (default 8) so provider rate limits are respected; the cap is recorded in run.started.
+- Concurrent runs cap all loops with `--max-loops` (default 8), recorded in `run.started`. A queued explanation starts
+  when a slot is available and no release-critical task is queued.
   Gemini's built-in endpoint in core 6.0.0 fails on the second tool round trip (missing thought signature), so it is not offered.
 - Every runner is wrapped: a throw becomes `inference.failed` + a model message, never a silent stop.
 

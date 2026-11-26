@@ -1,4 +1,5 @@
-import type { AgentSpec, ScenarioData, ScenarioPack, Scale } from "../../core/types.js";
+import type { ScenarioPackWithRoles, ScenarioRoles } from "../../core/roles.js";
+import type { AgentSpec, ScenarioData, Scale } from "../../core/types.js";
 import { scripted } from "./scripted.js";
 import { agentTools } from "./tools.js";
 
@@ -12,7 +13,12 @@ const agents = [
   ["Explainer", "Write a hold notice", 'Read get_hold_facts. Call write_hold_notice with a short explanation of the recorded reasons and row IDs. Include "This is not financial advice".', "verdict"],
 ] as const satisfies readonly [keyof typeof agentTools, string, string, AgentSpec["trigger"]][];
 
-export function payoutChangePack(generate: (scale: Scale) => ScenarioData): ScenarioPack {
+const roles: ScenarioRoles = {
+  dispatcher: "Dispatcher", intake: "InboxWatcher", auditor: "BatchAuditor",
+  checkers: ["RecordChecker", "PolicyAgent"], explainer: "Explainer",
+};
+
+export function payoutChangePack(generate: (scale: Scale) => ScenarioData): ScenarioPackWithRoles {
   return {
     id: "payout-change",
     title: "Payout account change",
@@ -21,7 +27,8 @@ export function payoutChangePack(generate: (scale: Scale) => ScenarioData): Scen
       name, role, instruction: `${instruction} ${cite}`, tools: agentTools[name], trigger,
     })),
     gatedTools: ["release_chunk"],
-    requiredVerdicts: ["RecordChecker", "PolicyAgent"],
+    roles,
+    requiredVerdicts: roles.checkers,
     scripted,
   };
 }

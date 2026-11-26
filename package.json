@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "sweep": "tsx src/cli.ts sweep",
     "demo": "tsx src/cli.ts run --scenario payout-change --mode concurrent --inference scripted",
     "demo:sequential": "tsx src/cli.ts run --scenario payout-change --mode sequential --inference scripted",
     "live": "tsx src/cli.ts run --scenario payout-change --mode concurrent --inference live"

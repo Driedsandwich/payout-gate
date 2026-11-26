@@ -2,13 +2,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { FunctionCallItem, ModelMessageItem, type InterceptionHandler } from "@mozaik-ai/core";
 import type { EventDraft } from "./eventlog.js";
 import type { Ledger } from "./ledger.js";
+import type { ScenarioRoles } from "./roles.js";
 import type { Chunk, RunSummary, SourceRef } from "./types.js";
 
 interface GateOptions {
   ledger: Ledger;
   tickMs: number;
   failPolicy: RunSummary["failPolicy"];
-  requiredVerdicts: string[];
+  roles: Pick<ScenarioRoles, "dispatcher" | "checkers">;
   gatedTools: string[];
   nowMs(): number;
   deliverThrough(ms: number): void;
@@ -32,7 +33,7 @@ export function createGate(options: GateOptions) {
     const scanned = ledger.scannedAt(chunk.id, cutoff);
     const pending = ledger.untriagedAt(cutoff);
     const items = chunk.itemIds.map((itemId) => {
-      const required = ledger.revisionAt(itemId, cutoff) > 0 ? options.requiredVerdicts : [];
+      const required = ledger.revisionAt(itemId, cutoff) > 0 ? options.roles.checkers : [];
       const verdicts = ledger.verdictsAt(itemId, cutoff);
       const missing = required.filter((by) => !verdicts.some((v) => v.by === by && v.value !== "unknown"));
       const suspicious = verdicts.filter((v) => required.includes(v.by) && v.value === "suspicious");
@@ -60,7 +61,7 @@ export function createGate(options: GateOptions) {
 
   async function decide(chunk: Chunk, loopId: string | undefined): Promise<string[]> {
     const dueMs = chunk.tick * options.tickMs;
-    const actor = { agent: "Dispatcher", loopId };
+    const actor = { agent: options.roles.dispatcher, loopId };
     emit({ ...actor, kind: "gate.wait", itemIds: chunk.itemIds, data: { chunkId: chunk.id, dueMs } });
     if (nowMs() < dueMs) await waitForEvidence(chunk, dueMs);
     // Readiness can change as more arrivals come in before the release tick.
@@ -84,7 +85,10 @@ export function createGate(options: GateOptions) {
         ? suspicious.flatMap((v) => v.sources)
         : [...ledger.item(itemId).sources, ...pending.flatMap((arrival) => arrival.sources)];
       const uniqueSources = [...new Map(sources.map((s) => [JSON.stringify(s), s])).values()];
-      ledger.addHold({ itemId, atMs: nowMs(), reasons, sources: uniqueSources });
+      const notice = timeout ? {
+        notice: `Your payout is held for review. ${reasons.join(" ")} This is not financial advice.`,
+      } : {};
+      ledger.addHold({ itemId, atMs: nowMs(), reasons, sources: uniqueSources, ...notice });
       emit({
         ...actor, kind: "gate.hold", itemIds: [itemId], sources: uniqueSources,
         data: { chunkId: chunk.id, timeout, reasons },
@@ -120,7 +124,7 @@ export function createGate(options: GateOptions) {
         if (requestedChunk !== chunk.id) return holdAnswer("The release request named the wrong chunk.");
         intercepted.add(chunk.id);
         const itemIds = (await settle(chunk, loopId())).filter((id) => ledger.item(id).status !== "released");
-        if (!itemIds.length) return holdAnswer("There are no payouts to release for this chunk.");
+        if (!itemIds.length) return holdAnswer("There are no items to release for this chunk.");
         return {
           nextStateId: "function_call",
           input: {

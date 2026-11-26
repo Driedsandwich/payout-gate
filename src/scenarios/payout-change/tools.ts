@@ -50,20 +50,21 @@ const releaseChunk = tool("release_chunk", "Request synthetic release for this t
 const readArrival = tool("read_arrival", "Read the delivered message and its account-change details.", { arrivalId: string },
   (args, ctx) => {
     const arrival = ctx.ledger.arrival(taskId(args, "arrivalId", ctx));
-    return { ...arrival, ...readRequest(arrival) };
+    const { id, atTick, channel, body } = arrival;
+    return { id, atTick, channel, body, ...readRequest(arrival) };
   });
 
-const findCreatorTool = tool("find_creator", "Find the creator identified by the message text.", { text: string },
+const findCreatorTool = tool("find_creator", "Find the creator by ID, handle, or contact email in the message text. Pass the full message including its signature.", { text: string },
   (args, ctx) => {
     const arrival = ctx.ledger.arrival(ctx.target.arrivalId!);
-    return findCreator(ctx.data, textArg(args, "text"), arrival.subjectId);
+    return findCreator(ctx.data, textArg(args, "text"), arrival.body);
   });
 
 const linkRequest = tool("link_request", "Link an actionable message and its requested account to the creator.",
   { arrivalId: string, creatorId: string, requestedAccount: string, channel: string }, (args, ctx) => {
     const arrival = ctx.ledger.arrival(taskId(args, "arrivalId", ctx));
     const request = readRequest(arrival);
-    const creator = findCreator(ctx.data, arrival.body, arrival.subjectId);
+    const creator = findCreator(ctx.data, arrival.body);
     if (!request.actionable || textArg(args, "creatorId") !== creator.creatorId ||
         textArg(args, "requestedAccount") !== request.requestedAccount || textArg(args, "channel") !== arrival.channel) {
       throw new Error("Link does not match the delivered message");
@@ -73,7 +74,7 @@ const linkRequest = tool("link_request", "Link an actionable message and its req
       arrivalId: arrival.id, creatorId: creator.creatorId, requestedAccount: request.requestedAccount!,
       channel: arrival.channel, sources,
     });
-    return { linked: true, sources };
+    return { linked: true, signals: creator.signals, sources };
   });
 
 const markNoAction = tool("mark_no_action", "Triage a message unrelated to an account change.",

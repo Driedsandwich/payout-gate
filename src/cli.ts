@@ -3,13 +3,15 @@ import { readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { makeScrubber } from "./core/eventlog.js";
-import { runScenario } from "./core/orchestrator.js";
+import { runScenario, type RunOptions } from "./core/orchestrator.js";
 import type { RunEvent, RunSummary, ScenarioData, ScenarioPack, Scale } from "./core/types.js";
 import { payoutChangePack } from "./scenarios/payout-change/pack.js";
 
 const scales = ["demo", "full", "mini"] as const;
+const modes = ["concurrent", "sequential"] as const;
+const scriptedNote = "Scripted latency is simulated; these numbers show the mechanism, not performance.";
 type ScaleName = typeof scales[number];
-type GeneratorModule = { generate: ScenarioPack["generate"]; SCALES: Record<ScaleName, Scale> };
+type GeneratorModule = { generate: ScenarioPack["generate"]; SCALES: Record<Exclude<ScaleName, "mini">, Scale> };
 type EvaluatorModule = { evaluate(events: RunEvent[], data: ScenarioData): RunSummary | Promise<RunSummary> };
 
 async function optionalModule<T>(modulePath: string): Promise<T | undefined> {
@@ -34,6 +36,56 @@ function positiveInteger(value: string, flag: string): number {
   return number;
 }
 
+async function loadScale(scaleName: ScaleName) {
+  if (scaleName !== "mini") {
+    const generator = await optionalModule<GeneratorModule>("./scenarios/payout-change/generate");
+    if (generator) return { generate: generator.generate, scale: generator.SCALES[scaleName] };
+    if (scaleName === "full") throw new Error("The full scale requires src/scenarios/payout-change/generate.ts");
+    console.log("Generator is missing. Using the mini fixture.");
+  }
+  const { MINI_SCALE, payoutMini } = await import("../test/fixtures/payout-mini.js");
+  return { generate: payoutMini, scale: MINI_SCALE };
+}
+
+async function evaluateRun(evaluator: EvaluatorModule, eventsPath: string, data: ScenarioData, out: string) {
+  const log = await readFile(eventsPath, "utf8");
+  const events = log.trimEnd().split("\n").map((line) => JSON.parse(line) as RunEvent);
+  const summary = await evaluator.evaluate(events, data);
+  await writeFile(join(out, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
+  return summary;
+}
+
+function sweepRow(summary: RunSummary) {
+  const {
+    mode, tickMs, released, held, plantedHeld, plantedMissed, falseHolds, heldByTimeout,
+    maxConcurrentLoops, modelCalls, wallMs,
+  } = summary;
+  return {
+    mode, tickMs, released, held, plantedHeld, plantedMissed, falseHolds, heldByTimeout,
+    maxConcurrentLoops, modelCalls, wallMs,
+  };
+}
+
+async function sweep(
+  out: string, ticks: number[], options: Omit<RunOptions, "runId" | "out" | "mode" | "tickMs">,
+  evaluator: EvaluatorModule,
+): Promise<void> {
+  const rows: ReturnType<typeof sweepRow>[] = [];
+  const note = options.inference.kind === "scripted" ? scriptedNote : undefined;
+  if (note) console.log(note);
+  for (const tickMs of ticks) {
+    for (const mode of modes) {
+      const runId = `${mode}-${tickMs}`;
+      const runOut = join(out, runId);
+      const result = await runScenario({ ...options, mode, tickMs, runId, out: runOut });
+      rows.push(sweepRow(await evaluateRun(evaluator, result.eventsPath, options.data, runOut)));
+    }
+  }
+  await writeFile(join(out, "sweep.json"), JSON.stringify({ note, rows }, null, 2) + "\n");
+  console.table(rows);
+  console.log(`Sweep folder ${out}`);
+}
+
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -45,45 +97,51 @@ async function main(): Promise<void> {
       model: { type: "string" },
       scale: { type: "string", default: "demo" },
       "tick-ms": { type: "string" },
+      ticks: { type: "string" },
       "fail-policy": { type: "string", default: "hold" },
       "max-loops": { type: "string", default: "8" },
       out: { type: "string" },
     },
   });
-  if (positionals.length !== 1 || positionals[0] !== "run") throw new Error("Expected the run command");
+  const [command] = positionals;
+  if (positionals.length !== 1 || (command !== "run" && command !== "sweep")) {
+    throw new Error("Expected the run or sweep command");
+  }
   const scenarioId = choice(values.scenario, ["payout-change"] as const, "scenario");
-  const mode = choice(values.mode, ["concurrent", "sequential"] as const, "mode");
   const kind = choice(values.inference, ["scripted", "live"] as const, "inference");
   const provider = values.provider && choice(values.provider, ["openrouter", "anthropic", "openai"] as const, "provider");
   const model = values.model?.trim();
   if (kind === "live" && (!provider || !model)) throw new Error("Live inference requires --provider and --model");
   const inference = kind === "live" && provider && model ? { kind, provider, model } : { kind: "scripted" as const };
   const scaleName = choice(values.scale, scales, "scale");
-  const tickMs = positiveInteger(values["tick-ms"] ?? (kind === "scripted" ? "1500" : "20000"), "tick-ms");
   const maxLoops = positiveInteger(values["max-loops"], "max-loops");
   const failPolicy = choice(values["fail-policy"], ["hold", "release"] as const, "fail-policy");
 
-  let generator = await optionalModule<GeneratorModule>("./scenarios/payout-change/generate");
-  if (!generator) {
-    if (scaleName === "full") throw new Error("The full scale requires src/scenarios/payout-change/generate.ts");
-    const { MINI_SCALE, payoutMini } = await import("../test/fixtures/payout-mini.js");
-    console.log("Generator is missing. Using the mini fixture.");
-    generator = { generate: payoutMini, SCALES: { demo: MINI_SCALE, mini: MINI_SCALE, full: MINI_SCALE } };
-  }
-  const pack = payoutChangePack(generator.generate);
-  const data = pack.generate(generator.SCALES[scaleName]);
+  const { generate, scale } = await loadScale(scaleName);
+  const pack = payoutChangePack(generate);
+  const data = pack.generate(scale);
+  const options = { pack, data, inference, failPolicy, maxLoops };
   const minute = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "");
+  const evaluator = await optionalModule<EvaluatorModule>("./eval/evaluate");
+  if (command === "sweep") {
+    if (!values.ticks) throw new Error("Sweep requires --ticks with comma-separated tick lengths");
+    const ticks = values.ticks.split(",").map((tick) => positiveInteger(tick.trim(), "ticks"));
+    if (new Set(ticks).size !== ticks.length) throw new Error("Sweep tick lengths must be distinct");
+    if (!evaluator) throw new Error("Sweep requires src/eval/evaluate.ts");
+    const out = resolve(values.out ?? join("runs", `${scenarioId}-sweep-${kind}-${minute}`));
+    await sweep(out, ticks, options, evaluator);
+    return;
+  }
+
+  const mode = choice(values.mode, modes, "mode");
+  const tickMs = positiveInteger(values["tick-ms"] ?? (kind === "scripted" ? "1500" : "20000"), "tick-ms");
   const defaultId = `${scenarioId}-${mode}-${kind}-${minute}`;
   const out = resolve(values.out ?? join("runs", defaultId));
   const runId = basename(out);
-  const result = await runScenario({ runId, out, pack, data, mode, inference, tickMs, failPolicy, maxLoops });
+  const result = await runScenario({ ...options, runId, out, mode, tickMs });
 
-  const evaluator = await optionalModule<EvaluatorModule>("./eval/evaluate");
   if (evaluator) {
-    const log = await readFile(result.eventsPath, "utf8");
-    const events = log.trimEnd().split("\n").map((line) => JSON.parse(line) as RunEvent);
-    const summary = await evaluator.evaluate(events, data);
-    await writeFile(join(out, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
+    await evaluateRun(evaluator, result.eventsPath, data, out);
   } else {
     console.log("Evaluator is missing. summary.json was skipped.");
   }

@@ -3,12 +3,13 @@ import { EventLog } from "./eventlog.js";
 import { createGate, waitUntil } from "./gate.js";
 import { Ledger } from "./ledger.js";
 import { createLoopRuntime } from "./loop-runtime.js";
-import type { Arrival, Chunk, InferenceMode, LedgerSnapshot, RunSummary, ScenarioData, ScenarioPack } from "./types.js";
+import { scenarioRoles, type ScenarioPackWithRoles } from "./roles.js";
+import type { Arrival, Chunk, InferenceMode, LedgerSnapshot, RunSummary, ScenarioData } from "./types.js";
 
 export interface RunOptions {
   runId: string;
   out: string;
-  pack: ScenarioPack;
+  pack: ScenarioPackWithRoles;
   data: ScenarioData;
   mode: RunSummary["mode"];
   inference: Exclude<InferenceMode, { kind: "replay" }>;
@@ -30,10 +31,11 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
   if (!Number.isSafeInteger(tickMs) || tickMs < 1 || !Number.isSafeInteger(maxLoops) || maxLoops < 1) {
     throw new Error("tickMs and maxLoops must be positive integers");
   }
+  const roles = scenarioRoles(pack);
   const log = new EventLog(runId, out);
   try {
-    const ledger = new Ledger(data.items, log.nowMs, log.emit);
-    const loops = createLoopRuntime({ ...options, log, ledger });
+    const ledger = new Ledger(data.items, log.nowMs, log.emit, roles);
+    const loops = createLoopRuntime({ ...options, log, ledger, explainer: roles.explainer });
     const arrivals = [...data.arrivals].sort((a, b) => a.atTick - b.atTick);
     const chunks = [...data.chunks].sort((a, b) => a.index - b.index);
     const due = (chunk: Chunk) => chunk.tick * tickMs;
@@ -52,15 +54,15 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
     }
 
     const gate = createGate({
-      ledger, tickMs, failPolicy, requiredVerdicts: pack.requiredVerdicts, gatedTools: pack.gatedTools,
+      ledger, tickMs, failPolicy, roles, gatedTools: pack.gatedTools,
       nowMs: log.nowMs, emit: log.emit, deliverThrough,
     });
 
-    const dispatch = (chunk: Chunk) => loops.run("Dispatcher", { chunkId: chunk.id }, undefined,
+    const dispatch = (chunk: Chunk) => loops.run(roles.dispatcher, { chunkId: chunk.id }, undefined,
       (loopId) => gate.handler(chunk, loopId));
-    const scan = (chunk: Chunk) => loops.run("BatchAuditor", { chunkId: chunk.id });
-    const triage = (arrival: Arrival) => loops.run("InboxWatcher", { arrivalId: arrival.id });
-    const explain = (itemId: string) => loops.run("Explainer", { itemId });
+    const scan = (chunk: Chunk) => loops.run(roles.auditor, { chunkId: chunk.id });
+    const triage = (arrival: Arrival) => loops.run(roles.intake, { arrivalId: arrival.id });
+    const explain = (itemId: string) => loops.run(roles.explainer, { itemId });
     const check = (agent: string, itemId: string, revision: number) => {
       const { subjectId } = ledger.item(itemId);
       return loops.run(agent, { itemId, creatorId: subjectId }, revision);
@@ -91,7 +93,7 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
       const unsubscribe = ledger.subscribe((signal) => {
         if (signal?.kind === "hold") schedule(() => explain(signal.itemId));
         if (signal?.kind === "evidence") {
-          for (const agent of pack.requiredVerdicts) schedule(() => check(agent, signal.itemId, signal.revision));
+          for (const agent of roles.checkers) schedule(() => check(agent, signal.itemId, signal.revision));
         }
       });
       schedule(deliverArrivals);
@@ -129,11 +131,8 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
         const entries = [...evidence];
         evidence.clear();
         for (const [itemId, revision] of entries) {
-          for (const agent of pack.requiredVerdicts) await check(agent, itemId, revision);
+          for (const agent of roles.checkers) await check(agent, itemId, revision);
         }
-      }
-      async function explainHolds(): Promise<void> {
-        for (const itemId of holds.splice(0)) await explain(itemId);
       }
       async function rounds(): Promise<void> {
         for (const chunk of chunks) {
@@ -143,7 +142,6 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
           await until(dispatchAt(chunk));
           await dispatch(chunk);
           await until(due(chunk));
-          await explainHolds();
         }
       }
       try {
@@ -152,7 +150,7 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
         if (failure) throw failure.reason;
         await reviewInbox();
         await reviewEvidence();
-        await explainHolds();
+        for (const itemId of holds) await explain(itemId);
       } finally {
         unsubscribe();
       }

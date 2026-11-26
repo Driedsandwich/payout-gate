@@ -1,5 +1,6 @@
 import { RuntimeState } from "@mozaik-ai/core";
 import type { EventDraft } from "./eventlog.js";
+import type { ScenarioRoles } from "./roles.js";
 import type { Arrival, Hold, ItemStatus, LedgerApi, LedgerSnapshot, SourceRef, Verdict, WorkItem } from "./types.js";
 
 export interface RequestLink {
@@ -33,6 +34,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     items: WorkItem[],
     private readonly nowMs: () => number,
     private readonly emit: (event: EventDraft) => void,
+    private readonly roles?: Pick<ScenarioRoles, "dispatcher" | "explainer" | "intake">,
   ) {
     super();
     for (const raw of items) {
@@ -59,7 +61,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     return structuredClone(item);
   }
 
-  setStatus(itemId: string, status: ItemStatus, by: string): void {
+  setStatus(itemId: string, status: ItemStatus, by: string | undefined): void {
     const after = this.item(itemId);
     if (after.status === status) return;
     if (after.status === "held" || after.status === "released") {
@@ -93,13 +95,14 @@ export class Ledger extends RuntimeState implements LedgerApi {
     return [...latest.values()];
   }
 
-  addHold(hold: Hold): void {
+  addHold(hold: LedgerHold): void {
     if (this.holds.has(hold.itemId)) return;
     const row = structuredClone(hold);
     this.holds.set(row.itemId, row);
-    this.setStatus(row.itemId, "held", "Dispatcher");
-    this.write("holds", row.itemId, row, "Dispatcher", row.sources);
-    this.notify({ kind: "hold", itemId: row.itemId });
+    this.setStatus(row.itemId, "held", this.roles?.dispatcher);
+    this.write("holds", row.itemId, row, this.roles?.dispatcher, row.sources);
+    // The gate supplies a complete notice for a timeout hold.
+    this.notify(row.notice === undefined ? { kind: "hold", itemId: row.itemId } : undefined);
   }
 
   holdFor(itemId: string): Hold | undefined {
@@ -111,7 +114,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     if (!hold) throw new Error(`No hold for ${itemId}`);
     const after = { ...hold, notice: text };
     this.holds.set(itemId, after);
-    this.write("holds", itemId, after, "Explainer", after.sources);
+    this.write("holds", itemId, after, this.roles?.explainer, after.sources);
   }
 
   addArrival(row: Arrival, atMs: number): void {
@@ -132,7 +135,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     if (this.links.has(row.arrivalId)) return;
     const atMs = this.nowMs();
     this.links.set(row.arrivalId, { row: structuredClone(row), atMs });
-    this.write("links", row.arrivalId, row, "InboxWatcher", row.sources);
+    this.write("links", row.arrivalId, row, this.roles?.intake, row.sources);
     if ("creatorId" in row) {
       for (const id of this.itemsBySubject.get(row.creatorId) ?? []) this.flag(id, atMs);
     }
@@ -178,7 +181,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     const approved = this.releaseLists.get(chunkId);
     if (!approved || itemIds.some((id) => !approved.has(id))) throw new Error("Release requires gate approval");
     const released = itemIds.filter((id) => this.items.get(id)?.status !== "released");
-    for (const id of released) this.setStatus(id, "released", "Dispatcher");
+    for (const id of released) this.setStatus(id, "released", this.roles?.dispatcher);
     return released;
   }
 
@@ -198,7 +201,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     for (const listener of this.listeners) listener(signal);
   }
 
-  private write(table: string, rowId: string, after: unknown, agent: string, sources: SourceRef[]): void {
+  private write(table: string, rowId: string, after: unknown, agent: string | undefined, sources: SourceRef[]): void {
     this.emit({
       kind: "ledger.write", agent, itemIds: table === "items" ? [rowId] : undefined,
       data: { table, rowId, after }, sources,

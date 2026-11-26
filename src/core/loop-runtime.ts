@@ -7,7 +7,7 @@ import type { EventLog } from "./eventlog.js";
 import { liveRunner, scriptedRunner, withEnvironmentValue, wrapRunner, type InferenceTask } from "./inference.js";
 import type { Ledger } from "./ledger.js";
 import type { TaskTarget, TaskToolContext } from "./task.js";
-import type { InferenceMode, ScenarioData, ScenarioPack } from "./types.js";
+import type { AgentSpec, InferenceMode, ScenarioData, ScenarioPack } from "./types.js";
 
 interface Task extends InferenceTask {
   finish(): void;
@@ -27,6 +27,7 @@ export interface LoopOptions {
   inference: Exclude<InferenceMode, { kind: "replay" }>;
   runner?: InferenceRunner;
   maxLoops: number;
+  explainer: string;
 }
 
 export function createLoopRuntime(options: LoopOptions) {
@@ -92,7 +93,17 @@ export function createLoopRuntime(options: LoopOptions) {
   }
 
   let seats = maxLoops;
-  const waiting: Array<() => void> = [];
+  const critical: Array<() => void> = [];
+  const explanations: Array<() => void> = [];
+
+  function startNext(): void {
+    if (!seats) return;
+    const start = critical.shift() ?? explanations.shift();
+    if (start) {
+      seats--;
+      start();
+    }
+  }
 
   async function run(
     name: string,
@@ -103,9 +114,26 @@ export function createLoopRuntime(options: LoopOptions) {
     const agent = agents.get(name);
     const spec = specs.get(name);
     if (!agent || !spec) throw new Error(`Missing agent ${name}`);
-    if (!seats) await new Promise<void>((resolve) => waiting.push(resolve));
-    else seats--;
+    const queue = name === options.explainer ? explanations : critical;
+    return new Promise<void>((resolve, reject) => {
+      queue.push(() => {
+        void runTask(agent, spec, target, revision, makeHandler).then(resolve, reject).finally(() => {
+          seats++;
+          startNext();
+        });
+      });
+      startNext();
+    });
+  }
 
+  async function runTask(
+    agent: ReturnType<typeof createAgent>,
+    spec: AgentSpec,
+    target: TaskTarget,
+    revision: number | undefined,
+    makeHandler: ((loopId: () => string | undefined) => InterceptionHandler) | undefined,
+  ): Promise<void> {
+    const { name } = spec;
     const context = ModelContext.create().addContextItem(DeveloperMessageItem.create(agent.getDeveloperMessage()));
     try {
       await new Promise<void>((finish) => {
@@ -135,9 +163,6 @@ export function createLoopRuntime(options: LoopOptions) {
       });
     } finally {
       tasks.delete(context.id);
-      const next = waiting.shift();
-      if (next) next();
-      else seats++;
     }
   }
 
