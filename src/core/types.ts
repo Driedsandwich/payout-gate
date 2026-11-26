@@ -74,6 +74,7 @@ export interface WorkItem {
   currency: string;        // "EUR", "USD"
   destination: string;     // ACCT-0001 style (synthetic)
   batchIndex: number;      // position in the batch (release order)
+  chunkId: string;         // "CH-01": released together on the chunk's tick
   status: ItemStatus;
   sources: SourceRef[];    // where every field of this row came from
 }
@@ -100,7 +101,9 @@ export interface Hold {
 /** An external input that arrives while the batch is running. */
 export interface Arrival {
   id: string;              // "IN-0007"
-  atMs: number;            // scheduled arrival time, relative to run start
+  /** arrival time in release ticks: chunk k is due at tick k (k = 1..n). The runner turns ticks into
+   *  milliseconds with the tick length of the run (short for scripted runs, longer for live runs). */
+  atTick: number;
   channel: string;         // "email" | "support_ticket" | "in_app" | "lender_api" ...
   subjectId?: string;      // may be unknown until an agent reads it
   body: string;            // synthetic text the intake agent reads
@@ -131,10 +134,18 @@ export interface Label {
   arrivalId?: string;
 }
 
+export interface Chunk {
+  id: string;              // "CH-01"
+  index: number;           // 1..n
+  tick: number;            // the release is due at this tick (= index)
+  itemIds: string[];
+}
+
 export interface ScenarioData {
   scenarioId: string;
   scale: Scale;
   items: WorkItem[];
+  chunks: Chunk[];
   arrivals: Arrival[];
   /** reference tables the tools read, keyed by table name, each row has an `id` */
   tables: Record<string, Array<Record<string, string | number> & { id: string }>>;
@@ -209,12 +220,15 @@ export interface RunSummary {
   inference: string;               // "scripted" | "live:openrouter:deepseek/deepseek-v4.1-flash-1017" ...
   scale: Scale;
   wallMs: number;
+  tickMs: number;                  // length of one release tick in this run
+  failPolicy: "hold" | "release";  // what the gate does when verdicts are not in by the tick
   items: number;
   released: number;
   held: number;
   plantedHeld: number;             // labels.shouldHold && held
   plantedMissed: number;           // labels.shouldHold && released  (money would have gone to the wrong account)
-  falseHolds: number;              // !labels.shouldHold && held
+  falseHolds: number;              // !labels.shouldHold && held (a clean creator is paid late)
+  heldByTimeout: number;           // holds caused by verdicts not arriving before the tick
   maxConcurrentLoops: number;      // measured from the event log
   modelCalls: number;
   inputTokens?: number;

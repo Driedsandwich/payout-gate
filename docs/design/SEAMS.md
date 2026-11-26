@@ -25,7 +25,11 @@ Reference tables (`ScenarioData.tables`):
 | `change_log` | `CL-0001` | creator_id, old_account_ref, new_account_ref, channel, device (`known`/`new`), at (ISO), applied (`yes`/`no`) |
 | `history` | `CR-0001` | payouts_90d, median_payout_cents_90d |
 
-Arrivals (`Arrival[]`, spread over the batch run, `atMs` relative to run start):
+Release schedule: chunk `CH-k` is due at tick `k` (the bank cut-off for that chunk). The run turns ticks into milliseconds with
+`--tick-ms` (defaults: 1500 for scripted runs, 20000 for live runs). The Dispatcher cannot move the schedule: a payout either
+leaves on its tick or is held (paid late). This is what makes the comparison fair: both modes face the same clock.
+
+Arrivals (`Arrival[]`, spread over the batch run, `atTick` in release ticks):
 - planted takeover requests: email or support ticket asking to change the payout account "before today's payout",
   from a look-alike domain or a reply-to mismatch, to an `ACCT-` not in `master` or `change_log`.
 - planted in-batch takeovers: the account in the batch row itself was changed shortly before the batch from a `new` device,
@@ -49,19 +53,22 @@ Labels (`Label[]`) are produced by the generator and used only by `src/eval/`. A
 
 ### Gate (the `InterceptionHandler` on `release_chunk`)
 
-Before `release_chunk(CH-k)` runs, the gate emits `gate.wait` and waits (bounded) until:
+Before `release_chunk(CH-k)` runs, the gate emits `gate.wait` and waits (at most until tick `k`) until:
 1. BatchAuditor has scanned `CH-k`;
 2. every arrival that has arrived so far is triaged (linked or no-action);
 3. every item of `CH-k` that is linked or flagged has a verdict from both RecordChecker and PolicyAgent.
 
 Then it rewrites the call: clear items are released, suspicious items are held (`gate.hold` with reasons + sources).
-On timeout an uncertain item is HELD, never released (fail safe). The wait is per chunk, so the rest of the batch keeps flowing.
+When tick `k` comes and an item is still uncertain, the product policy is `--fail-policy hold` (held, paid late, counted in
+`heldByTimeout`). `--fail-policy release` exists only to measure what an unchecked release would have paid out.
+The wait is per chunk, so the rest of the batch keeps flowing.
 
 ### Sequential baseline (`--mode sequential`)
 
 The same agents, tools, prompts and gate, but only one loop runs at a time, in this order per chunk:
 InboxWatcher for each arrival received so far → RecordChecker and PolicyAgent for each linked/flagged item → BatchAuditor scan → Dispatcher release.
-Arrivals that land while these steps run are only seen at the next chunk. Nothing else is weakened.
+Arrivals that land while these steps run are only seen at the next chunk. The same release clock and the same fail policy apply,
+so a sequential run that cannot keep up shows it as late payouts (`hold`) or paid-out takeovers (`release`). Nothing else is weakened.
 
 ## Scenario B: `double-pledge` (second)
 
@@ -86,3 +93,22 @@ Same gate rules, same baseline rule.
   `anthropic` and `openai` use Mozaik's built-in endpoints). Keys come only from environment variables.
   Gemini's built-in endpoint in core 6.0.0 fails on the second tool round trip (missing thought signature), so it is not offered.
 - Every runner is wrapped: a throw becomes `inference.failed` + a model message, never a silent stop.
+
+## Event data shapes (the core emits these; the evaluator and the UI read them)
+
+| kind | itemIds | data | sources |
+|---|---|---|---|
+| `run.started` | — | `{ scenarioId, mode, inference, tickMs, failPolicy, scale }` | — |
+| `arrival` | — | `{ arrivalId, channel }` | the arrival's sources |
+| `ledger.write` | `[rowId]` when the row is an item | `{ table: "items" \| "verdicts" \| "holds" \| "links", rowId, after }` (`after` = the row after the write; for items it has `status`) | row sources |
+| `gate.wait` | the chunk's item ids | `{ chunkId, dueMs }` | — |
+| `gate.pass` | released item ids | `{ chunkId }` | — |
+| `gate.hold` | held item ids | `{ chunkId, timeout: boolean, reasons: string[] }` | the rows behind the reasons |
+| `inference.completed` | — | `{ usage?: { input: number, output: number } }` (copied from Mozaik's token usage when present) | — |
+| `inference.failed` | — | `{ error: string }` | — |
+| `citation.reject` | — | `{ agent, text, numbers: string[] }` | — |
+| `run.finished` | — | `{ wallMs }` | — |
+
+Mozaik events keep their payload under `data.payload` (trimmed to what is JSON-safe) and their `loopId` in `loopId`.
+The final status of an item is the `after.status` of its last `ledger.write` on table `items`.
+A loop is active from its `message_received.started` to its `model.answer` or `inference.failed` (same `loopId`).
