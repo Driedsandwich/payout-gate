@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runScenario } from "../src/core/orchestrator.js";
+import { runScenario, type RunOptions } from "../src/core/orchestrator.js";
 import type { Arrival, RunEvent, ScenarioData, WorkItem } from "../src/core/types.js";
 import { doublePledgePack, ruleConstants } from "../src/scenarios/double-pledge/pack.js";
 import { preparePledgeData } from "../src/scenarios/double-pledge/rules.js";
@@ -100,10 +100,10 @@ afterEach(async () => {
   await rm(out, { recursive: true, force: true });
 });
 
-async function run(data: ScenarioData) {
+async function run(data: ScenarioData, timing: Partial<Pick<RunOptions, "mode" | "tickMs">> = {}) {
   const result = await runScenario({
     runId: "pledge-pack-test", out, pack: doublePledgePack, data, mode: "concurrent",
-    inference: { kind: "scripted" }, tickMs: 600, failPolicy: "hold", maxLoops: 8,
+    inference: { kind: "scripted" }, tickMs: 600, failPolicy: "hold", maxLoops: 8, ...timing,
   });
   const events = (await readFile(result.eventsPath, "utf8")).trimEnd().split("\n")
     .map((line) => JSON.parse(line) as RunEvent);
@@ -112,12 +112,17 @@ async function run(data: ScenarioData) {
   return { ...result, events };
 }
 
-function fundingCalls(events: RunEvent[]): string[][] {
-  return events.flatMap(({ kind, data }) => {
+function toolCalls(events: RunEvent[]) {
+  return events.flatMap(({ kind, data, seq }) => {
     if (kind !== "function_call.started") return [];
     const { call } = data?.payload as { call: { name: string; args: string } };
-    return call.name === "fund_batch" ? [JSON.parse(call.args).itemIds as string[]] : [];
+    const args = JSON.parse(call.args) as { itemId?: string; itemIds?: string[] };
+    return [{ name: call.name, args, seq }];
   });
+}
+
+function fundingCalls(events: RunEvent[]): string[][] {
+  return toolCalls(events).filter(({ name }) => name === "fund_batch").map(({ args }) => args.itemIds!);
 }
 
 describe("double-pledge pack", () => {
@@ -147,7 +152,7 @@ describe("double-pledge pack", () => {
     // The similar invoice, both halves of a same-lender split, and the resubmission are eligible.
     expect(ledger.items.filter(({ status }) => status === "released").map(({ id }) => id)).toEqual(["FR-4", "FR-5", "FR-6", "FR-7"]);
     const noMatch = events.find(({ data }) => data?.table === "links" && data.rowId === "IN-0002");
-    expect(noMatch?.data?.after).toMatchObject({ reason: "No pending request matches the invoice." });
+    expect(noMatch?.data?.after).toMatchObject({ reason: "No funding request matches the invoice." });
     for (const itemId of ["FR-5", "FR-6"]) {
       expect(ledger.verdicts.filter((v) => v.itemId === itemId).map(({ value }) => value)).toEqual(["clear", "clear"]);
     }
@@ -162,5 +167,44 @@ describe("double-pledge pack", () => {
     const { ledger, events } = await run(data);
     expect(ledger.holds).toHaveLength(1);
     expect(fundingCalls(events)).toEqual([]);
+  });
+
+  it("confirms a held second-lender copy and clears a held same-lender split", async () => {
+    const data = fixture();
+    data.items = data.items.filter(({ id }) => ["FR-1", "FR-5", "FR-6"].includes(id))
+      .map((item) => ({ ...item, chunkId: "FB-1" }));
+    data.chunks = [{ ...data.chunks[0], itemIds: data.items.map(({ id }) => id) }];
+    data.arrivals = [
+      { ...data.arrivals[0], atTick: 0 },
+      submission("IN-0004", invoice("IV-00006", "INV-00025", { advance_cents: 6_024 }), 0, "IV-00003"),
+    ];
+
+    // Sequential intake can start at once, but takes several scripted steps before the audit can run.
+    const { ledger, events } = await run(data, { mode: "sequential", tickMs: 20 });
+    expect(ledger.holds.map(({ itemId, outcome }) => ({ itemId, outcome }))).toEqual([
+      { itemId: "FR-1", outcome: "confirmed" },
+      { itemId: "FR-5", outcome: "cleared_late" },
+      { itemId: "FR-6", outcome: "cleared_late" },
+    ]);
+
+    const calls = toolCalls(events);
+    for (const { itemId, arrivalId, subjectId, outcome, source } of [
+      { itemId: "FR-1", arrivalId: "IN-0001", subjectId: "IV-00001", outcome: "confirmed", source: "invoices/IV-00009" },
+      { itemId: "FR-5", arrivalId: "IN-0004", subjectId: "IV-00005", outcome: "cleared_late", source: "invoices/IV-00006" },
+      { itemId: "FR-6", arrivalId: "IN-0004", subjectId: "IV-00005", outcome: "cleared_late", source: "invoices/IV-00005" },
+    ]) {
+      const cutoff = events.findIndex(({ kind, itemIds, data }) =>
+        kind === "gate.hold" && itemIds?.includes(itemId) && data?.timeout === true);
+      expect(cutoff).toBeGreaterThanOrEqual(0);
+      const link = events.slice(cutoff + 1).find(({ data }) => data?.table === "links" && data.rowId === arrivalId);
+      expect(link?.data?.after).toMatchObject({ creatorId: subjectId });
+      const resolved = events.find(({ kind, data }) =>
+        kind === "hold.resolved" && data?.itemId === itemId && data.outcome === outcome);
+      expect(resolved?.sources?.map((ref) => ref.source)).toContain(`${origin}#${source}`);
+      expect(calls.filter(({ name, args, seq }) =>
+        args.itemId === itemId && seq > link!.seq && seq < resolved!.seq
+        && (name === "lookup_registry" || name === "lookup_debtor_ledger")).map(({ name }) => name))
+        .toEqual(["lookup_registry", "lookup_debtor_ledger"]);
+    }
   });
 });

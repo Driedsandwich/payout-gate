@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Replay a synthetic Black Friday payout batch and inspect the evidence behind every hold.">
-    <title>Black Friday payouts</title>
+    <title></title>
     <script type="module" src="./main.ts"></script>
   </head>
   <body>
     <header class="page-header">
       <div class="page-title">
-        <span class="scenario" aria-label="Scenario 1">S1</span>
-        <h1>Black Friday payouts</h1>
+        <h1 id="product-name"></h1>
+        <p id="tagline"></p>
       </div>
       <nav class="toolbar" aria-label="Replay and comparison">
         <div class="playback" id="playback">
@@ -28,9 +28,10 @@
 
     <main>
       <div id="replay-view">
+        <h2 id="scenario-title"></h2>
         <p class="headline" id="headline"></p>
         <div class="overview">
-          <dl class="stats" aria-label="Payout counts at the replay position">
+          <dl class="stats" id="stats">
             <div class="stat">
               <dt><span>Final cut-off</span></dt>
               <dd id="cutoff"></dd>
@@ -58,14 +59,14 @@
         <section class="timeline" aria-labelledby="timeline-title">
           <div class="section-heading">
             <h2 id="timeline-title">Agent timeline</h2>
-            <ul class="status-legend" aria-label="Payout status legend">
+            <ul class="status-legend" aria-label="Status legend">
               <li><span class="mark sent" aria-hidden="true"></span><strong>Sent</strong> · released</li>
               <li><span class="mark held" aria-hidden="true"></span><strong>Held</strong> · blocked at cut-off</li>
               <li><span class="mark waiting" aria-hidden="true"></span><strong>Waiting</strong> · pending release decision</li>
             </ul>
           </div>
           <div class="chart-caption">
-            <p><span class="bar-key" aria-hidden="true"></span> One bar is one agent task loop. <span class="gate-key" aria-hidden="true"></span> Dashed spans mark gate waits.</p>
+            <p><span class="bar-key" aria-hidden="true"></span> Agent task <span class="gate-key" aria-hidden="true"></span> Gate wait <span id="unread-key" hidden><span class="unread-key" aria-hidden="true"></span> Unread at cut-off</span></p>
             <p id="playback-help">Replay plays or scrubs the run. Compare runs puts both modes side by side.</p>
             <p class="scroll-hint">Scroll the timeline to see all cut-offs.</p>
           </div>
@@ -76,13 +77,13 @@
 
         <section class="holds" aria-labelledby="holds-title">
           <div class="section-heading">
-            <h2 id="holds-title">Held payouts</h2>
+            <h2 id="holds-title"></h2>
             <p class="table-count" id="table-count"></p>
           </div>
           <div class="table-scroll" tabindex="0" role="region" aria-labelledby="holds-title">
             <table class="holds-table">
               <thead>
-                <tr><th scope="col">Creator</th><th scope="col">Status</th><th scope="col">Source rows</th><th scope="col"><span class="visually-hidden">Evidence</span></th></tr>
+                <tr><th scope="col" id="hold-subject"></th><th scope="col">Status</th><th scope="col">Outcome</th><th scope="col">Source rows</th><th scope="col"><span class="visually-hidden">Evidence</span></th></tr>
               </thead>
               <tbody id="hold-rows"></tbody>
             </table>
@@ -92,17 +93,23 @@
 
       <section id="compare-view" aria-labelledby="compare-title" hidden>
         <h2 id="compare-title" tabindex="-1">Compare runs</h2>
-        <p class="compare-intro">The same payout batch and bank cut-offs, with overlapping agent loops or one loop at a time.</p>
-        <table class="metrics" aria-labelledby="compare-title">
-          <thead>
-            <tr><th scope="col">Metric</th><th scope="col">Concurrent</th><th scope="col">Sequential</th></tr>
-          </thead>
-          <tbody id="metrics-rows"></tbody>
-        </table>
-        <p class="compare-note" id="compare-note" hidden>Scripted latency is simulated; these numbers show the mechanism, not performance.</p>
+        <div class="compare-summary">
+          <section aria-labelledby="metrics-title">
+            <h3 id="metrics-title">Run summaries</h3>
+            <table class="metrics" aria-labelledby="metrics-title">
+              <thead>
+                <tr><th scope="col">Metric</th><th scope="col">Concurrent</th><th scope="col">Sequential</th></tr>
+              </thead>
+              <tbody id="metrics-rows"></tbody>
+            </table>
+          </section>
+          <section id="cutoff-sweep" aria-labelledby="sweep-title">
+            <h3 id="sweep-title">Cut-off sweep</h3>
+          </section>
+        </div>
         <div class="section-heading compare-heading">
           <h2>Agent timelines</h2>
-          <p>Both runs share an elapsed-time scale. The dashed line marks the final bank cut-off.</p>
+          <p>Both runs share an elapsed-time scale. The dashed line marks each run’s final cut-off.</p>
         </div>
         <div class="compare-charts" id="compare-charts"></div>
       </section>

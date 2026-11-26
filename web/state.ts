@@ -1,4 +1,17 @@
-import type { ReplayRun } from "./run-data.js";
+import type { HeldItem, ReplayRun } from "./run-data.js";
+
+export function resolutionAt(hold: HeldItem, time: number) {
+  return hold.resolution && hold.resolution.time <= time ? hold.resolution : undefined;
+}
+
+export function outcomeLabel(hold: HeldItem, time: number): string {
+  if (!hold.timeout) return "Held: evidence";
+  switch (resolutionAt(hold, time)?.outcome) {
+    case "confirmed": return "Held at cut-off → confirmed";
+    case "cleared_late": return "Held at cut-off → cleared, paid late";
+    default: return "Held at cut-off";
+  }
+}
 
 export function snapshotAt(run: ReplayRun, time: number) {
   const statuses = new Map<string, ReplayRun["statuses"][number]["status"]>();

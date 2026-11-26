@@ -1,19 +1,6 @@
 import type { GateWait, Lane, ReplayRun, Segment } from "./run-data.js";
 
-const labels: Record<string, string> = {
-  Dispatcher: "Payout runner",
-  InboxWatcher: "Inbox reader",
-  BatchAuditor: "Batch auditor",
-  RecordChecker: "Source verifier",
-  PolicyAgent: "Policy checker",
-  Explainer: "Hold explainer",
-};
-
-export type TimelineRun = Pick<ReplayRun, "duration" | "lanes" | "ticks" | "waits">;
-
-export function agentLabel(agent: string): string {
-  return labels[agent] ?? agent;
-}
+export type TimelineRun = Pick<ReplayRun, "duration" | "lanes" | "ticks" | "waits" | "unread" | "words">;
 
 export function seconds(ms: number, digits = 1): string {
   return `${(ms / 1000).toFixed(digits)} s`;
@@ -77,7 +64,7 @@ export function buildTimeline(mount: HTMLElement, run: TimelineRun, end: number,
       axis.append(timeLabel);
     }
     if (isFinal && !compact) {
-      const cutoff = element("span", "cutoff-label", "Bank cut-off");
+      const cutoff = element("span", "cutoff-label", run.words.cutoff);
       cutoff.style.left = x;
       axis.append(cutoff);
     }
@@ -92,8 +79,7 @@ export function buildTimeline(mount: HTMLElement, run: TimelineRun, end: number,
   if (compact && end > (finalTick?.cutoff ?? 0) * 1.3) addTick(end, seconds(end, 0));
   if (!compact) lines.append(cursor);
 
-  function addSpan(node: HTMLElement, time: Pick<Segment, "start" | "end">, label: string) {
-    node.style.left = position(time.start);
+  function describe(node: HTMLElement, label: string) {
     node.title = label;
     node.setAttribute("aria-label", label);
     if (inspection) {
@@ -110,6 +96,11 @@ export function buildTimeline(mount: HTMLElement, run: TimelineRun, end: number,
       });
       if (node instanceof HTMLButtonElement) node.addEventListener("click", show);
     }
+  }
+
+  function addSpan(node: HTMLElement, time: Pick<Segment, "start" | "end">, label: string) {
+    node.style.left = position(time.start);
+    describe(node, label);
     spans.push({ node, ...time });
   }
 
@@ -120,8 +111,10 @@ export function buildTimeline(mount: HTMLElement, run: TimelineRun, end: number,
     lane.append(node);
   }
 
+  const gateLane = run.waits.find((wait) => wait.agent)?.agent ?? run.lanes[0]?.agent;
+  const marks: Array<{ node: HTMLElement; time: number }> = [];
   for (const lane of run.lanes) {
-    const label = agentLabel(lane.agent);
+    const { agent, label } = lane;
     const name = element("div", "lane-label", label);
     const row = element("div", "lane-plot");
     const { placed, count } = tracks(lane);
@@ -133,7 +126,18 @@ export function buildTimeline(mount: HTMLElement, run: TimelineRun, end: number,
       addSpan(node, segment, `${label} · ${taskLabel(segment.task)}`);
       row.append(node);
     }
-    if (lane.agent === "Dispatcher") run.waits.forEach((wait) => addGateWait(wait, row));
+    for (const wait of run.waits) {
+      if ((wait.agent ?? gateLane) === agent) addGateWait(wait, row);
+    }
+    for (const { time, arrivalId, agent: actor } of run.unread) {
+      if ((actor ?? gateLane) !== agent) continue;
+      const mark = element(compact ? "span" : "button", "unread-mark");
+      if (mark instanceof HTMLButtonElement) mark.type = "button";
+      mark.style.left = position(time);
+      describe(mark, `${arrivalId} · Message unread at cut-off. It named nobody and stopped nothing.`);
+      marks.push({ node: mark, time });
+      row.append(mark);
+    }
     plot.append(name, row);
   }
   plot.append(lines);
@@ -142,6 +146,7 @@ export function buildTimeline(mount: HTMLElement, run: TimelineRun, end: number,
   mount.replaceChildren(chart);
 
   function render(time: number): void {
+    for (const mark of marks) mark.node.hidden = mark.time > time;
     for (const span of spans) {
       span.node.hidden = span.start > time;
       if (!span.node.hidden) span.node.style.width = position(Math.min(span.end, time) - span.start);

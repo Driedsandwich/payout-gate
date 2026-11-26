@@ -5,12 +5,32 @@ import type { Hold, RunEvent, RunSummary, ScenarioData, SourceRef, Verdict, Work
 import { readRunMetadata } from "../../src/eval/evaluate.js";
 import { generate as generatePayouts } from "../../src/scenarios/payout-change/generate.js";
 import { generate as generatePledges } from "../../src/scenarios/double-pledge/generate.js";
-import type { GateDecision, GateWait, HeldPayout, Lane, ReplayRun, RowValues, Segment, Timed } from "../run-data.js";
+import type { GateDecision, GateWait, HeldItem, HoldResolution, Lane, ReplayRun, RowValues, ScenarioWords, Segment } from "../run-data.js";
 
 const generators = {
   "payout-change": generatePayouts,
   "double-pledge": generatePledges,
 } satisfies Record<string, (scale: RunSummary["scale"]) => ScenarioData>;
+
+const scenarios = {
+  "payout-change": {
+    title: "Black Friday payouts",
+    words: { item: "payout", items: "payouts", subject: "creator", cutoff: "Bank cut-off" },
+    labels: {
+      Dispatcher: "Payout runner",
+      InboxWatcher: "Inbox reader",
+      BatchAuditor: "Batch auditor",
+      RecordChecker: "Source verifier",
+      PolicyAgent: "Policy checker",
+      Explainer: "Hold explainer",
+    },
+  },
+  "double-pledge": {
+    title: "Double pledge",
+    words: { item: "funding request", items: "funding requests", subject: "seller", cutoff: "Funding cut-off" },
+    labels: {},
+  },
+} satisfies Record<keyof typeof generators, { title: string; words: ScenarioWords; labels: Record<string, string> }>;
 
 type Request = { arrivalId: string; creatorId: string; requestedAccount: string };
 
@@ -57,7 +77,10 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
   if (!Object.hasOwn(generators, metadata.scenarioId)) {
     throw new Error(`No generator for ${metadata.scenarioId}`);
   }
-  const generate = generators[metadata.scenarioId as keyof typeof generators];
+  const scenarioId = metadata.scenarioId as keyof typeof generators;
+  const generate = generators[scenarioId];
+  const { title: scenarioTitle, words } = scenarios[scenarioId];
+  const labels: Record<string, string> = scenarios[scenarioId].labels;
   if (metadata.runId !== summary.runId || metadata.scenarioId !== summary.scenarioId) {
     throw new Error("Run log and summary identify different runs");
   }
@@ -69,19 +92,21 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
   const lanes = new Map<string, Lane>();
   const segments = new Map<string, Segment>();
   const waits: GateWait[] = [];
+  const unread: ReplayRun["unread"] = [];
   const decidedAt = new Map<string, number>();
   const decisions: GateDecision[] = [];
   const arrivals: ReplayRun["arrivals"] = [];
   const statuses: ReplayRun["statuses"] = [];
   const heldAt = new Map<string, number>();
   const holdRows = new Map<string, Hold>();
+  const resolutions = new Map<string, HoldResolution>();
   const holdDecisions = new Map<string, Extract<GateDecision, { type: "hold" }> & { citations: SourceRef[] }>();
-  const verdicts = new Map<string, HeldPayout["verdicts"]>();
-  const notices = new Map<string, HeldPayout["notices"]>();
-  const requests = new Map<string, HeldPayout["requests"]>();
+  const verdicts = new Map<string, HeldItem["verdicts"]>();
+  const notices = new Map<string, HeldItem["notices"]>();
+  const requests = new Map<string, HeldItem["requests"]>();
 
   const laneFor = (agent: string) => {
-    if (!lanes.has(agent)) lanes.set(agent, { agent, segments: [] });
+    if (!lanes.has(agent)) lanes.set(agent, { agent, label: labels[agent] ?? agent, segments: [] });
     return lanes.get(agent)!;
   };
 
@@ -114,8 +139,20 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
         break;
       }
       case "gate.wait":
-        waits.push({ chunkId: String(eventData?.chunkId), dueMs: Number(eventData?.dueMs), start: time, end: duration, loopId });
+        waits.push({ chunkId: String(eventData?.chunkId), dueMs: Number(eventData?.dueMs), start: time, end: duration, loopId, agent });
         break;
+      case "gate.unread":
+        if (typeof eventData?.arrivalId === "string") unread.push({ time, agent, arrivalId: eventData.arrivalId });
+        break;
+      case "hold.resolved": {
+        const { itemId, outcome } = eventData ?? {};
+        if (typeof itemId === "string" && (outcome === "confirmed" || outcome === "cleared_late")) {
+          const previous = resolutions.get(itemId);
+          const citations = sources.length ? sources : previous?.citations ?? [];
+          resolutions.set(itemId, { time, outcome, reasons: previous?.reasons ?? [], sources: cite(citations), citations });
+        }
+        break;
+      }
       case "gate.pass":
       case "gate.hold": {
         const chunkId = String(eventData?.chunkId);
@@ -144,9 +181,16 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
             break;
           }
           case "holds": {
-            const row = after as Hold & { notice?: string };
+            const row = after as Hold;
             if (!holdRows.has(rowId)) holdRows.set(rowId, row);
-            if (row.notice) append(notices, rowId, { time, text: row.notice });
+            if (row.outcome && !resolutions.has(rowId)) {
+              const citations = row.sources ?? sources;
+              resolutions.set(rowId, { time, outcome: row.outcome, reasons: row.reasons ?? [], sources: cite(citations), citations });
+            }
+            if (row.notice && notices.get(rowId)?.at(-1)?.text !== row.notice) {
+              const origin = row.outcome === "cleared_late" ? "resolution" : undefined;
+              append(notices, rowId, origin ? { time, text: row.notice, origin } : { time, text: row.notice });
+            }
             break;
           }
           case "verdicts": {
@@ -168,7 +212,7 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
   }
 
   for (const wait of waits) wait.end = Math.max(wait.start, decidedAt.get(wait.chunkId) ?? duration);
-  const holds = [...heldAt].map(([itemId, time]): HeldPayout => {
+  const holds = [...heldAt].map(([itemId, time]): HeldItem => {
     const item = items.get(itemId);
     if (!item) throw new Error(`Unknown held item ${itemId}`);
     const row = holdRows.get(itemId);
@@ -177,28 +221,34 @@ export async function condenseRun(runDirectory: string): Promise<ReplayRun> {
     for (const verdict of itemVerdicts) cite(verdict.sources);
     const master = tables.get("master")?.get(item.subjectId);
     const creator = tables.get("creators")?.get(item.subjectId)?.handle;
+    const sellerId = tables.get("invoices")?.get(item.subjectId)?.seller_id;
+    const seller = typeof sellerId === "string" ? tables.get("sellers")?.get(sellerId)?.name : undefined;
     const citations = decision?.citations ?? row?.sources ?? [];
     const masterSources = master ? [{ source: `data/master.csv#${item.subjectId}` }] : [];
     const sourceKeys = cite([...masterSources, ...citations]);
-    if (!sourceKeys.some((key) => key in sourceRows)) sourceKeys.push(...cite(item.sources));
-    if (!sourceKeys.some((key) => key in sourceRows)) {
+    const hasRowValue = (key: string) => Object.entries(sourceRows[key] ?? {}).some(([field, value]) => field !== "id" && value !== "");
+    if (!sourceKeys.some(hasRowValue)) sourceKeys.push(...cite(item.sources));
+    if (!sourceKeys.some(hasRowValue)) {
       throw new Error(`No data row found for held item ${itemId}`);
     }
+    const itemNotices = notices.get(itemId) ?? [];
+    if (decision?.timeout && row?.notice && itemNotices[0]?.text === row.notice) itemNotices[0].origin = "cutoff";
     return {
       itemId, time,
       subjectId: item.subjectId, chunkId: item.chunkId,
-      creator: String(creator ?? item.subjectId), amountCents: item.amountCents, currency: item.currency,
+      subjectName: String(creator ?? seller ?? sellerId ?? item.subjectId), amountCents: item.amountCents, currency: item.currency,
       batchAccount: item.destination, accountOnFile: typeof master?.account_ref === "string" ? master.account_ref : undefined,
       requests: requests.get(item.subjectId) ?? [],
       timeout: decision?.timeout ?? false, reasons: decision?.reasons ?? row?.reasons ?? [],
-      sources: [...new Set(sourceKeys)], citations, verdicts: itemVerdicts, notices: notices.get(itemId) ?? [],
+      sources: [...new Set(sourceKeys)], citations, verdicts: itemVerdicts, notices: itemNotices,
+      resolution: resolutions.get(itemId),
     };
   });
 
   return {
-    summary, duration, lanes: [...lanes.values()],
+    scenarioId, scenarioTitle, words, summary, duration, lanes: [...lanes.values()],
     ticks: data.chunks.map(({ id, tick, itemIds }) => ({ chunkId: id, tick, cutoff: tick * metadata.tickMs, itemIds })),
-    waits, decisions, arrivals, statuses, holds, sourceRows,
+    waits, unread, decisions, arrivals, statuses, holds, sourceRows,
   };
 }
 

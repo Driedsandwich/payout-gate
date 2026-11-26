@@ -78,10 +78,9 @@ export function readPledgeMessage(data: ScenarioData, { id, body, sources }: Arr
   return { kind: "debtor", invoice, sources: distinctSources(evidence) };
 }
 
-export function fingerprintMessage(data: ScenarioData, arrival: Arrival, pending: WorkItem[]) {
+export function fingerprintMessage(data: ScenarioData, arrival: Arrival, items: WorkItem[]) {
   const message = readPledgeMessage(data, arrival);
-  const matches = "invoice" in message ? pending.flatMap((item) => {
-    if (item.status !== "queued" && item.status !== "checking") return [];
+  const matches = "invoice" in message ? items.flatMap((item) => {
     const row = invoiceRow(data, item);
     const invoice = row && submission(row);
     if (!row || !invoice || !matchesFingerprint(invoice, message.invoice)) return [];

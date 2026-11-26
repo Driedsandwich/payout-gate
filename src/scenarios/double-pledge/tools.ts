@@ -59,22 +59,22 @@ const readArrival = tool("read_arrival", "Read the delivered message and identif
 
 function fingerprintArgs(args: Args, ctx: TaskToolContext) {
   const arrival = ctx.ledger.arrival(taskId(args, "arrivalId", ctx));
-  return { arrival, ...fingerprintMessage(ctx.data, arrival, ctx.ledger.snapshot().items) };
+  return { arrival, ...fingerprintMessage(ctx.data, arrival, ctx.data.items) };
 }
 
-const fingerprintInvoice = tool("fingerprint_invoice", "Compare the message's invoice with pending requests.",
+const fingerprintInvoice = tool("fingerprint_invoice", "Compare the message's invoice with funding requests, including held requests.",
   { arrivalId: string }, (args, ctx) => {
     const { kind, matches, lender, sources } = fingerprintArgs(args, ctx);
     return { kind, matches, lender, sources: [...sources, ...Object.values(ruleConstants)] };
   });
 
-const linkRequest = tool("link_request", "Link the delivered message to its fingerprint-matched pending requests.",
+const linkRequest = tool("link_request", "Link the message to its fingerprint-matched funding requests and start evidence checks.",
   { arrivalId: string, subjectId: string }, (args, ctx) => {
     const { arrival, kind, matches, lender, sources } = fingerprintArgs(args, ctx);
     const subjectId = textArg(args, "subjectId");
     if (!matches.length) {
       if (kind !== "incomplete") {
-        ctx.ledger.triage({ arrivalId: arrival.id, reason: "No pending request matches the invoice.", sources });
+        ctx.ledger.triage({ arrivalId: arrival.id, reason: "No funding request matches the invoice.", sources });
       }
       return { linked: [], sources };
     }
@@ -85,18 +85,18 @@ const linkRequest = tool("link_request", "Link the delivered message to its fing
     return { linked: matches.map(({ itemId }) => itemId), sources };
   });
 
-const markNoAction = tool("mark_no_action", "Record an unrelated message or a message with no matching pending request.",
+const markNoAction = tool("mark_no_action", "Record an unrelated message or a message with no matching funding request.",
   { arrivalId: string }, (args, ctx) => {
     const { arrival, kind, matches, sources } = fingerprintArgs(args, ctx);
     if (kind === "incomplete" || matches.length) return { triaged: false, sources };
     ctx.ledger.triage({
       arrivalId: arrival.id, sources,
-      reason: kind === "unrelated" ? "The message does not report a pledge or submission." : "No pending request matches the invoice.",
+      reason: kind === "unrelated" ? "The message does not report a pledge or submission." : "No funding request matches the invoice.",
     });
     return { triaged: true, sources };
   });
 
-const scanChunk = tool("scan_chunk", "Scan pending funding requests and flag those that need checker verdicts.",
+const scanChunk = tool("scan_chunk", "Scan the chunk's funding requests and flag those that need checker verdicts.",
   { chunkId: string }, (args, ctx) => {
     const chunkId = taskId(args, "chunkId", ctx);
     const chunk = ctx.data.chunks.find(({ id }) => id === chunkId);
