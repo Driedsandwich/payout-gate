@@ -20,7 +20,7 @@ Why this matters (public context, not a result of this project): the [2024 Annua
 
 The bank cut-off does not wait. Messages arrive, the inbox has to be read, the next chunks audited and the records checked, all before each chunk's cut-off. Running those checks at the same time lets them share the deadline window; unfinished work can still cause a hold, and with the default fail policy the gate does not release a payout it is unsure about.
 
-The one-loop-at-a-time baseline uses the **same agents, prompts, tools, gate and clock**; only the scheduling differs. Before each release it reads newly arrived messages one by one until none is unread or the cut-off comes. At a cut-off, an unread message stops only the payouts of the creators it names; a message that names nobody stops nothing.
+The one-loop-at-a-time baseline uses the **same agents, prompts, tools, gate and clock**. Before each release it reads newly arrived messages one by one until none is unread or the cut-off comes. At a cut-off, an unread message stops only the payouts of the creators it names; a message that names nobody stops nothing.
 
 ## One message, traced through the live run
 
@@ -70,13 +70,13 @@ Recorded on 2026-11-26 with `deepseek/deepseek-v4.1-flash-1017` through OpenRout
 | failed model calls | 0 | 0 | 0 | 0 |
 | median / 90th percentile model latency | 1.6 s / 4.3 s | 1.3 s / 3.7 s | 2.0 s / 5.9 s | 1.6 s / 5.7 s |
 | wall time | 187 s | 552 s | 286 s | 639 s |
-| notices refused by the citation check / written by code after 3 refusals | 10 / 2 | 1 / 0 | 24 / 2 | 23 / 4 |
+| citation-check refusals / notices written by code after 3 refusals | 10 / 2 | 1 / 0 | 24 / 2 | 23 / 4 |
 | run folder (summary.json, events.jsonl.gz) | `runs/live/payout-change-t20/concurrent-20000` | `…/sequential-20000` | `runs/live/double-pledge-t20/concurrent-20000` | `…/sequential-20000` |
 
-- These are single recorded runs, not averages. A refused notice contained a number that no tool output of its loop contained (for example the model converted cents to euros itself); it is not a failed model call.
+- These are single recorded runs, not averages. A refusal means a notice draft contained a number that no tool output of its loop contained (for example the model converted cents to euros itself); it is not a failed model call.
 - In the payouts concurrent run, one planted takeover (`PO-00270`) was held at its cut-off and stayed held with the reason "Inbox triage did not complete for IN-0011": held, but not fully investigated.
 - The four live runs together cost at most USD 0.21 (an upper bound measured from provider key usage before and after the runs).
-- A scripted sweep (simulated think time, so it shows the mechanism, not performance) varies the cut-off interval: at 300 ms one loop at a time paid 49 of 400 on time and the concurrent run 392; from 1,000 ms both kept up. On the larger full set, which was not used while building (2,000 payouts, 24 planted), the scripted concurrent run held 24 of 24.
+- A scripted sweep (simulated think time, so it shows the mechanism, not performance) varies the cut-off interval: at 300 ms one loop at a time paid 49 of 400 on time and the concurrent run 392; from 1,000 ms both kept up. On the larger full set, kept out of tuning (2,000 payouts, 24 planted), the scripted concurrent run at the current version held 24 of 24 and no clean payout (`runs/scripted/payout-change-full/concurrent-1500`).
 
 ## Run it
 
@@ -114,7 +114,7 @@ npm run web:build && npx vite preview --config web/vite.config.ts
 
 ## For other agents: the MCP door
 
-An AI agent about to pay a batch can ask the gate first (MCP = Model Context Protocol; here it runs on the synthetic demo data only). `npm run mcp:start` starts a stdio MCP server with three tools: `check_payout_batch` (returns held items with their source rows), `explain_hold` (verdicts, notice, sources) and `get_run_summary`. "Call check_payout_batch before releasing a payout batch; do not release items it returns as held." It uses scripted inference only, accepts no credentials and writes only to an OS temp folder. `npm run mcp:example` starts it and calls it; client configuration is in [`mcp/README.md`](mcp/README.md).
+An AI agent about to pay a batch can ask the gate first (MCP = Model Context Protocol; it takes the generated demo batch, or a supplied batch in the same synthetic format). `npm run mcp:start` starts a stdio MCP server with three tools: `check_payout_batch` (returns held items with their source rows), `explain_hold` (verdicts, notice, sources) and `get_run_summary`. "Call check_payout_batch before releasing a payout batch; do not release items it returns as held." It uses scripted inference only, accepts no credentials and writes only to an OS temp folder. `npm run mcp:example` starts it and calls it; client configuration is in [`mcp/README.md`](mcp/README.md).
 
 ## Data and honesty
 
@@ -131,4 +131,4 @@ An AI agent about to pay a batch can ask the gate first (MCP = Model Context Pro
 
 ## How it was built
 
-Built during the JigJoy Black Friday AI Hackathon (from 2026-11-26 10:00 CET) with AI assistance: the interfaces (`docs/design/SEAMS.md`, `src/core/types.ts`) and the measurements of Mozaik 6.0.0 were written first, coding agents implemented against them, and the frozen evaluation sets were built by a separate job before the runtime existed. Direct dependencies: `@mozaik-ai/core` (MIT), `@modelcontextprotocol/sdk` (MIT), `zod` (MIT). The replay site bundles no third-party packages (`web/dist/THIRD_PARTY_NOTICES.txt`).
+Built during the JigJoy Black Friday AI Hackathon (from 2026-11-26 10:00 CET) with AI assistance: the interfaces (`docs/design/SEAMS.md`, `src/core/types.ts`) and the measurements of Mozaik 6.0.0 were written first, coding agents implemented against them, and the frozen evaluation sets were built by a separate job before the runtime existed. Direct dependencies: `@mozaik-ai/core` (MIT), `@modelcontextprotocol/sdk` (MIT), `zod` (MIT). The replay site bundles no third-party packages ([notices](https://headgate-replay.vercel.app/THIRD_PARTY_NOTICES.txt), written by `npm run web:build`).

@@ -1,0 +1,25 @@
+{
+  "runId": "full_rerun_0311",
+  "scenarioId": "payout-change",
+  "mode": "concurrent",
+  "inference": "scripted",
+  "scale": {
+    "items": 2000,
+    "arrivals": 120,
+    "planted": 24,
+    "seed": 7
+  },
+  "tickMs": 1500,
+  "failPolicy": "hold",
+  "wallMs": 60059.462084,
+  "items": 2000,
+  "released": 1976,
+  "held": 24,
+  "plantedHeld": 24,
+  "plantedMissed": 0,
+  "falseHolds": 0,
+  "heldByTimeout": 0,
+  "maxConcurrentLoops": 6,
+  "modelCalls": 960,
+  "citationRejects": 0
+}
