@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1050" viewBox="0 0 1200 1050" role="img" aria-labelledby="title desc">
+  <title id="title">Headgate architecture: concurrent checks and gated release</title>
+  <desc id="desc">Five check and explanation agent roles share the Mozaik RuntimeState ledger. A sixth role, the Dispatcher, calls release_chunk through an InterceptionHandler gate. The bank cut-off clock and the ledger inform the gate. Allowed payouts reach the release tool, and every ledger write is recorded in an event log.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#34404a"/></marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #17212b; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 20px; fill: #46525d; }
+      .section { font-size: 21px; font-weight: 700; }
+      .role { font-size: 22px; font-weight: 700; }
+      .name { font-size: 19px; fill: #46525d; }
+      .detail { font-size: 19px; }
+      .small { font-size: 17px; fill: #46525d; }
+      .box { fill: #ffffff; stroke: #596571; stroke-width: 1.5; }
+      .group { fill: #f6f7f8; stroke: #aab2b9; stroke-width: 1.5; }
+      .gate { fill: #f7ece6; stroke: #843C19; stroke-width: 2.5; }
+      .flow { fill: none; stroke: #34404a; stroke-width: 2; marker-end: url(#arrow); }
+      .shared { fill: none; stroke: #34404a; stroke-width: 2; marker-start: url(#arrow); marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1200" height="1050" fill="#ffffff"/>
+  <text class="title" x="48" y="54">Headgate</text>
+  <text class="subtitle" x="48" y="88">Concurrent agent tasks, a shared ledger and a gate before release</text>
+
+  <rect class="group" x="48" y="132" width="744" height="470" rx="4"/>
+  <text class="section" x="68" y="167">Checks and explanations run concurrently</text>
+
+  <rect class="box" x="68" y="188" width="342" height="110" rx="3"/>
+  <text class="role" x="88" y="220">Inbox reader</text>
+  <text class="name" x="88" y="248">InboxWatcher</text>
+  <text class="detail" x="88" y="277">Links messages; checks domains</text>
+
+  <rect class="box" x="430" y="188" width="342" height="110" rx="3"/>
+  <text class="role" x="450" y="220">Batch auditor</text>
+  <text class="name" x="450" y="248">BatchAuditor</text>
+  <text class="detail" x="450" y="277">Scans chunks ahead of release</text>
+
+  <rect class="box" x="68" y="314" width="342" height="110" rx="3"/>
+  <text class="role" x="88" y="346">Source verifier</text>
+  <text class="name" x="88" y="374">RecordChecker</text>
+  <text class="detail" x="88" y="403">Master record and change log</text>
+
+  <rect class="box" x="430" y="314" width="342" height="110" rx="3"/>
+  <text class="role" x="450" y="346">Policy checker</text>
+  <text class="name" x="450" y="374">PolicyAgent</text>
+  <text class="detail" x="450" y="403">Payout rules computed in code</text>
+
+  <rect class="box" x="248" y="440" width="342" height="110" rx="3"/>
+  <text class="role" x="268" y="472">Hold explainer</text>
+  <text class="name" x="268" y="500">Explainer</text>
+  <text class="detail" x="268" y="529">Writes notices; numbers checked</text>
+  <text class="small" x="68" y="580">Each task uses one runLoop and a fresh ModelContext.</text>
+
+  <rect class="box" x="842" y="188" width="310" height="142" rx="3"/>
+  <text class="role" x="862" y="220">Payout runner</text>
+  <text class="name" x="862" y="248">Dispatcher</text>
+  <text class="detail" x="862" y="278">One loop per chunk</text>
+  <text class="detail" x="862" y="307">Calls release_chunk</text>
+
+  <rect class="box" x="842" y="430" width="310" height="115" rx="3"/>
+  <text class="role" x="862" y="466">Bank cut-off clock</text>
+  <text class="detail" x="862" y="500">Fixed deadline</text>
+  <text class="detail" x="862" y="526">for each chunk</text>
+
+  <path class="shared" d="M 420 606 V 662"/>
+  <text class="small" x="438" y="640">Shared reads and writes</text>
+
+  <path class="flow" d="M 842 259 H 818 V 628 H 866 V 662"/>
+  <path class="flow" d="M 997 545 V 662"/>
+  <text class="small" x="1014" y="612">Cut-off</text>
+
+  <rect class="box" x="48" y="666" width="744" height="130" rx="3"/>
+  <text class="role" x="72" y="705">Shared ledger</text>
+  <text class="name" x="72" y="736">Mozaik RuntimeState</text>
+  <text class="detail" x="72" y="770">Items · verdicts · holds · arrivals · links</text>
+
+  <path class="flow" d="M 792 731 H 838"/>
+  <rect class="gate" x="842" y="666" width="310" height="130" rx="3"/>
+  <text class="role" x="862" y="699">Gate</text>
+  <text class="name" x="862" y="727">Mozaik InterceptionHandler</text>
+  <text class="detail" x="862" y="756">Hold doubtful payouts</text>
+  <text class="detail" x="862" y="783">Pass clean payouts at cut-off</text>
+
+  <path class="flow" d="M 420 796 V 860"/>
+  <text class="small" x="438" y="836">Every write</text>
+  <rect class="box" x="48" y="864" width="744" height="100" rx="3"/>
+  <text class="role" x="72" y="903">Event log</text>
+  <text class="detail" x="72" y="937">runs/&lt;id&gt;/events.jsonl</text>
+
+  <path class="flow" d="M 997 796 V 860"/>
+  <text class="small" x="1014" y="836">Allowed payouts</text>
+  <rect class="box" x="842" y="864" width="310" height="100" rx="3"/>
+  <text class="role" x="862" y="903">Release tool</text>
+  <text class="detail" x="862" y="937">release_chunk</text>
+
+</svg>
