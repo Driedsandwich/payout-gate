@@ -66,7 +66,8 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
       (loopId) => gate.handler(chunk, loopId));
     const scan = (chunk: Chunk) => loops.run(roles.auditor, { chunkId: chunk.id });
     const triage = (arrival: Arrival) => loops.run(roles.intake, { arrivalId: arrival.id });
-    const explain = (itemId: string) => loops.run(roles.explainer, { itemId });
+    const explain = (itemId: string) => gate.explainHold(itemId,
+      (handler) => loops.run(roles.explainer, { itemId }, undefined, () => handler));
     const check = (agent: string, itemId: string, revision: number) => {
       const { subjectId } = ledger.item(itemId);
       return loops.run(agent, { itemId, creatorId: subjectId }, revision);
@@ -85,6 +86,21 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
       if (!gate.hasCall(chunk.id)) ledger.releaseAuthorized(chunk.id, released);
     }
 
+    async function retryTimeoutReviews(runBatch: (tasks: Array<() => Promise<void>>) => Promise<void>): Promise<void> {
+      const reviews = gate.timeoutReviews();
+      const unread = new Set(reviews.flatMap(({ unread }) => unread));
+      const unscanned = new Set(reviews.filter(({ needsAudit }) => needsAudit).map(({ chunkId }) => chunkId));
+      const auditChunks = chunks.filter(({ id }) => unscanned.has(id));
+      await runBatch([
+        ...[...unread].map((id) => () => triage(ledger.arrival(id))),
+        ...auditChunks.map((chunk) => () => scan(chunk)),
+      ]);
+      // Retried intake and audit can start checks for a new evidence revision.
+      await runBatch(gate.timeoutReviews().flatMap(({ itemId, missing, revision }) =>
+        missing.map((agent) => () => check(agent, itemId, revision))));
+      gate.resolveTimeoutHolds();
+    }
+
     async function concurrent(): Promise<void> {
       const pending = new Set<Promise<void>>();
       const errors: unknown[] = [];
@@ -92,6 +108,9 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
         const task = Promise.resolve().then(work).catch((error) => { errors.push(error); });
         pending.add(task);
         void task.then(() => pending.delete(task));
+      }
+      async function drain(): Promise<void> {
+        while (pending.size) await Promise.all(pending);
       }
       onArrival = (arrival) => schedule(() => triage(arrival));
       const unsubscribe = ledger.subscribe((signal) => {
@@ -113,9 +132,12 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
         schedule(() => enforceTick(chunk));
       }
       try {
-        while (pending.size) await Promise.all(pending);
-        gate.resolveTimeoutHolds();
-        while (pending.size) await Promise.all(pending);
+        await drain();
+        await retryTimeoutReviews(async (tasks) => {
+          for (const task of tasks) schedule(task);
+          await drain();
+        });
+        await drain();
         if (errors.length) throw errors[0];
       } finally {
         unsubscribe();
@@ -168,7 +190,10 @@ export async function runScenario(options: RunOptions): Promise<RunResult> {
         if (failure) throw failure.reason;
         await reviewInbox();
         await reviewEvidence();
-        gate.resolveTimeoutHolds();
+        await retryTimeoutReviews(async (tasks) => {
+          for (const task of tasks) await task();
+          await reviewEvidence();
+        });
         for (const itemId of holds) await explain(itemId);
       } finally {
         unsubscribe();

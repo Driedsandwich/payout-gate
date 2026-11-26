@@ -70,11 +70,16 @@ causes a timeout hold with a notice about the pending work. With `--fail-policy 
 uncertain payouts. Decisions apply per chunk.
 
 Before the run finishes, it waits for intake, audit and checker loops to finish and reviews the timeout holds.
-Suspicious verdicts convert a timeout hold to a verdict hold with the verdict source rows and an Explainer notice.
+It retries incomplete work for those holds once. Once the relevant intake and required checks conclude, suspicious
+verdicts convert a timeout hold to a verdict hold with the verdict source rows and an Explainer notice.
 When the audit and relevant intake are complete and all required checks are clear, the hold is recorded as
 “cleared after cut-off” and the payout is counted as paid late. The hold row and `hold.resolved` record the outcome.
-An inconclusive review leaves the payout held. The sweep counts `confirmedLate` and `clearedLate` alongside the
-original cut-off counts.
+An inconclusive review leaves the payout held and records the reason in `hold.unresolved`. The sweep counts
+`confirmedLate` and `clearedLate` alongside the original cut-off counts.
+
+The Explainer can attempt up to three writes per hold. Standalone numbers and dates in its notice must match a
+scalar value returned by a tool in the same loop. If the loop ends without a valid notice, the gate writes one
+from the recorded hold reasons and sources.
 
 ### Sequential baseline (`--mode sequential`)
 
@@ -128,14 +133,17 @@ Same gate rules, same baseline rule.
 | `gate.hold` | held item ids | `{ chunkId, timeout: boolean, reasons: string[] }` | the rows behind the reasons |
 | `gate.unread` | — | `{ arrivalId }` | the unread arrival that named no creator |
 | `hold.resolved` | `[itemId]` | `{ itemId, outcome: "confirmed" \| "cleared_late" }` | the rows supporting the outcome |
+| `hold.unresolved` | `[itemId]` | `{ itemId, reason }` | the rows supporting the cut-off hold |
 | `inference.completed` | — | `{ usage?: { input: number, output: number } }` (copied from Mozaik's token usage when present) | — |
 | `inference.failed` | — | `{ error: string }` | — |
 | `citation.reject` | — | `{ agent, text, numbers: string[] }` | — |
+| `citation.fallback` | `[itemId]` | `{ itemId, attempts }` | the rows used to build the notice |
 | `run.finished` | — | `{ wallMs }` | — |
 
 Mozaik events keep their payload under `data.payload` (trimmed to what is JSON-safe) and their `loopId` in `loopId`.
 The cut-off status of an item is the `after.status` of its last `ledger.write` on table `items`.
 The optional `Hold.outcome` field records what happened to a timeout hold after the cut-off.
+The optional `Hold.unresolvedReason` field records why a timeout hold could not be resolved.
 A loop is active from its `message_received.started` to its `model.answer` or `inference.failed` (same `loopId`).
 
 ## The agent-facing door (MCP)

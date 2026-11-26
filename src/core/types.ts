@@ -12,7 +12,7 @@
  *   - A runner that throws produces no event (only an unhandled rejection). Every runner is
  *     wrapped so a failure becomes an `inference.failed` RunEvent and a model message.
  *   - The end of a loop is the `model.answer` event (payload carries the loopId).
- *   - Numbers are never written by a model. Tools compute them and return a SourceRef with each.
+ *   - Model notices may cite numbers and dates returned as tool output values.
  *
  * Data is synthetic. Account references look like ACCT-0001 on purpose (never a real IBAN shape).
  * Nothing here moves money: "release" only writes a row in the ledger.
@@ -41,7 +41,9 @@ export type RunEventKind =
   | "gate.hold"          // the gate rewrote a gated tool call into a hold notice
   | "gate.unread"        // a message was unread at the cut-off and named no subject
   | "hold.resolved"      // late review confirmed the hold or cleared the item for late payment
-  | "citation.reject"    // an agent text contained a number with no SourceRef behind it
+  | "hold.unresolved"    // late review could not complete, with the reason recorded
+  | "citation.reject"    // an agent text contained an unsupported numeric fact
+  | "citation.fallback"  // the gate wrote a notice from recorded hold evidence
   | "run.started"
   | "run.finished";
 
@@ -99,6 +101,7 @@ export interface Hold {
   sources: SourceRef[];
   notice?: string;
   outcome?: "confirmed" | "cleared_late";
+  unresolvedReason?: string;
   resolvedBy?: string;     // human reviewer name when approved/rejected
 }
 

@@ -14,5 +14,6 @@ export interface TaskToolContext extends ToolContext {
   target: TaskTarget;
   revision?: number;
   toolSources: SourceRef[];
+  readonly toolOutputs: readonly string[];
   ledger: Ledger;
 }

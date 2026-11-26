@@ -112,7 +112,7 @@ export class Ledger extends RuntimeState implements LedgerApi {
     outcome: NonNullable<Hold["outcome"]>;
   }): void {
     const hold = this.holds.get(itemId);
-    if (!hold || hold.outcome) return;
+    if (!hold || hold.outcome || hold.unresolvedReason) return;
     const after = { ...hold, ...resolution };
     this.holds.set(itemId, after);
     this.write("holds", itemId, after, this.roles?.dispatcher, after.sources);
@@ -123,12 +123,24 @@ export class Ledger extends RuntimeState implements LedgerApi {
     if (after.outcome === "confirmed") this.notify({ kind: "hold", itemId });
   }
 
-  addNotice(itemId: string, text: string): void {
+  markHoldUnresolved(itemId: string, reason: string): void {
+    const hold = this.holds.get(itemId);
+    if (!hold || hold.outcome || hold.unresolvedReason) return;
+    const after = { ...hold, unresolvedReason: reason };
+    this.holds.set(itemId, after);
+    this.write("holds", itemId, after, this.roles?.dispatcher, after.sources);
+    this.emit({
+      kind: "hold.unresolved", agent: this.roles?.dispatcher, itemIds: [itemId],
+      data: { itemId, reason }, sources: after.sources,
+    });
+  }
+
+  addNotice(itemId: string, text: string, agent = this.roles?.explainer): void {
     const hold = this.holds.get(itemId);
     if (!hold) throw new Error(`No hold for ${itemId}`);
     const after = { ...hold, notice: text };
     this.holds.set(itemId, after);
-    this.write("holds", itemId, after, this.roles?.explainer, after.sources);
+    this.write("holds", itemId, after, agent, after.sources);
   }
 
   addArrival(row: Arrival, atMs: number): void {
@@ -142,6 +154,10 @@ export class Ledger extends RuntimeState implements LedgerApi {
     const entry = this.arrivals.get(id);
     if (!entry) throw new Error(`Arrival ${id} has not been delivered`);
     return structuredClone(entry.row);
+  }
+
+  triageFor(arrivalId: string): Triage | undefined {
+    return structuredClone(this.links.get(arrivalId)?.row);
   }
 
   triage(row: Triage): void {

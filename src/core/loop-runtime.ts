@@ -1,5 +1,5 @@
 import {
-  createAgent, createHuman, defineRuntime, DeveloperMessageItem, ModelContext, SituationSpecification,
+  createAgent, createHuman, defineRuntime, DeveloperMessageItem, FunctionCallOutputItem, ModelContext, SituationSpecification,
   type InferenceRunner, type InterceptionHandler, type SemanticEvent, type Tool,
 } from "@mozaik-ai/core";
 import { outputSources } from "./citations.js";
@@ -146,6 +146,10 @@ export function createLoopRuntime(options: LoopOptions) {
             const actor = { agent: name, loopId: task.loopId };
             const ctx: TaskToolContext = {
               ...actor, data, ledger, target, revision, toolSources, nowMs: log.nowMs,
+              get toolOutputs() {
+                return context.getItems().flatMap((item) =>
+                  item instanceof FunctionCallOutputItem ? [item.output.text] : []);
+              },
               emit: (event) => log.emit({ ...actor, ...event }),
             };
             const output = await tool.invoke(args, ctx);

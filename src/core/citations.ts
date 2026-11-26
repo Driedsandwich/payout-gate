@@ -1,10 +1,15 @@
 import type { EventDraft } from "./eventlog.js";
 import type { SourceRef } from "./types.js";
 
-const date = /\b\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?\b/;
+const date = /\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?/;
 const identifier = /\b(?!(?:EUR|USD)-)[A-Z][A-Z_]*-\d+\b(?![.,]\d)/;
 const numeric = /(?:[+-]?\p{Sc}?|\p{Sc}[+-]?)(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/u;
-const tokens = new RegExp(`(?<date>${date.source})|(?<id>${identifier.source})|${numeric.source}`, "gu");
+const word = String.raw`[\p{L}\p{M}\p{N}_]`;
+// Block both whole and partial matches inside words and dotted or hyphenated identifiers.
+const start = `(?:(?<!${word}|${word}[.-]|\\d,)|(?<=\\b(?:EUR|USD))(?=-))`;
+const end = `(?!${word}|\\.${word}|,\\d)`;
+// An x suffix on its own denotes a multiplier, as in "3x the median".
+const tokens = new RegExp(`(?<id>${identifier.source})|${start}(?:(?<date>${date.source})${end}|${numeric.source}(?:${end}|(?=[x×]${end})))`, "gu");
 const listMarker = /^[ \t]*(?:(?:>|[-*+])[ \t]+)*\d+[.)](?=[ \t]+\S)|(?<=[:;])[ \t]*\d+\)(?=[ \t]+\S)/gm;
 
 function factKey(value: string, isDate: boolean): number | string | undefined {
@@ -36,21 +41,37 @@ export function outputSources(output: unknown): SourceRef[] {
   return Object.values(output).flatMap(outputSources);
 }
 
+function collectFacts(value: unknown, cited: Set<number | string>): void {
+  if (typeof value === "number" && Number.isFinite(value)) cited.add(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const [match] = trimmed.matchAll(tokens);
+    if (!match || match[0] !== trimmed || match.groups?.id) return;
+    const key = factKey(trimmed, Boolean(match.groups?.date));
+    if (key !== undefined) cited.add(key);
+  } else if (typeof value === "object" && value !== null) {
+    for (const entry of Object.values(value)) collectFacts(entry, cited);
+  }
+}
+
 export function checkCitations(
   text: string,
   sources: SourceRef[],
   actor: { agent: string; loopId?: string },
   emit: (event: EventDraft) => void,
+  toolOutputs: readonly string[] = [],
 ): boolean {
   const cited = new Set<number | string>();
-  for (const { value } of sources) {
-    if (typeof value === "number" && Number.isFinite(value)) cited.add(value);
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    const [match] = trimmed.matchAll(tokens);
-    if (!match || match[0] !== trimmed || match.groups?.id) continue;
-    const key = factKey(trimmed, Boolean(match.groups?.date));
-    if (key !== undefined) cited.add(key);
+  for (const { value } of sources) collectFacts(value, cited);
+  for (const output of toolOutputs) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      // Core leaves string results unquoted.
+      parsed = output;
+    }
+    collectFacts(parsed, cited);
   }
 
   const unsupported = new Set<string>();

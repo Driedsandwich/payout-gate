@@ -19,10 +19,32 @@ it.each([
   "Review: 1) Check the records; 2) Confirm the account.",
   "The invoice date was 2026-10-22 and the account changed at 2026-11-26T18:00:00+09:00.",
   "The amount is $1,234.50 and the adjustment is -$1,250.",
+  "Verification channels include in_app_2fa, 2FA, 2fa, and support_v1.",
+  "CR-0068 and ACCT-2407 appear in CL-0107 for amber.collage.0158 and amber.collage.0270.",
 ])("accepts sourced facts and formatting in %s", (notice) => {
   const emit = vi.fn();
   expect(checkCitations(notice, sources, actor, emit)).toBe(true);
   expect(emit).not.toHaveBeenCalled();
+});
+
+it("accepts standalone dates and numbers from nested JSON values in tool outputs", () => {
+  const outputs = [
+    JSON.stringify({ rows: [{ joined_at: "2025-02-20", history: [1234.5, "8"] }] }),
+    JSON.stringify({ change: { at: "2025-02-21T09:30:00+09:00" } }),
+  ];
+  const notice = "Joined on 2025-02-20. Changed at 2025-02-21T00:30:00Z. There were 8 payouts totaling $1,234.50.";
+  const emit = vi.fn();
+  expect(checkCitations(notice, [], actor, emit, outputs)).toBe(true);
+  expect(emit).not.toHaveBeenCalled();
+});
+
+it("does not cite digits embedded in tool output keys or prose", () => {
+  const outputs = [JSON.stringify({ "2025-02-20": "row", note: "The amount is 24." })];
+  const emit = vi.fn();
+  expect(checkCitations("24 on 2025-02-20.", [], actor, emit, outputs)).toBe(false);
+  expect(emit).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+    numbers: ["24", "2025-02-20"],
+  }) }));
 });
 
 it.each([

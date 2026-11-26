@@ -109,6 +109,12 @@ describe("payout runtime", () => {
         ]),
       })]);
       expect(ledger.items[1].status).toBe("released");
+      expect(ledger.holds[0]).toMatchObject({
+        itemId: "PO-00001", outcome: "cleared_late", notice: expect.stringContaining("paid late"),
+      });
+      expect(events.find(({ kind }) => kind === "hold.resolved")).toMatchObject({
+        data: { itemId: "PO-00001", outcome: "cleared_late" },
+      });
     },
   );
 
@@ -119,10 +125,15 @@ describe("payout runtime", () => {
     expect(events.some(({ kind }) => kind === "gate.hold" || kind === "gate.unread")).toBe(false);
   });
 
-  it("upgrades a timeout hold when late suspicious verdicts arrive and waits for the Explainer", async () => {
+  it.each(["concurrent", "sequential"] as const)("confirms a late linked takeover in %s mode", async (mode) => {
     const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 0.99);
-    const { events, ledger } = await run({ data });
-    expect(events.find(({ kind }) => kind === "gate.hold")?.data?.timeout).toBe(true);
+    const { events, ledger } = await run({ data, mode });
+    const hold = events.find(({ kind }) => kind === "gate.hold")!;
+    const link = events.find(({ kind, data }) => kind === "ledger.write" && data?.table === "links")!;
+    expect(hold.data?.timeout).toBe(true);
+    expect(hold.seq).toBeLessThan(link.seq);
+    expect(ledger.verdicts.filter(({ value }) => value === "suspicious").map(({ by }) => by).sort())
+      .toEqual(["PolicyAgent", "RecordChecker"]);
     expect(events.filter(({ kind }) => kind === "hold.resolved")).toEqual([
       expect.objectContaining({ data: { itemId: "PO-00001", outcome: "confirmed" } }),
     ]);
@@ -136,6 +147,39 @@ describe("payout runtime", () => {
       notice: expect.stringMatching(/payout is on hold.*IN-0010/),
     });
     expect(events.find(({ kind, agent }) => kind === "ledger.write" && agent === "Explainer")?.data?.table).toBe("holds");
+    expect(events.at(-1)?.kind).toBe("run.finished");
+  });
+
+  it("retries incomplete intake and checks for a timeout hold", async () => {
+    const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 0.99);
+    const firstAttempt = new Set(["InboxWatcher", "RecordChecker"]);
+    const scripted = {
+      ...pack.scripted,
+      next: (...args: Parameters<typeof pack.scripted.next>) => firstAttempt.delete(args[0])
+        ? { answer: "Try again later." } : pack.scripted.next(...args),
+    };
+    const { events, ledger } = await run({ data, pack: { ...pack, scripted } });
+    const starts = events.filter(({ kind }) => kind === "message_received.started").map(({ agent }) => agent);
+    expect(starts.filter((agent) => agent === "InboxWatcher")).toHaveLength(2);
+    expect(starts.filter((agent) => agent === "RecordChecker")).toHaveLength(2);
+    expect(ledger.holds[0]).toMatchObject({ outcome: "confirmed", notice: expect.stringContaining("IN-0010") });
+    expect(events.some(({ kind }) => kind === "hold.unresolved")).toBe(false);
+  });
+
+  it("records an unresolved timeout hold when a checker permanently fails", async () => {
+    const data = cleanPair("Please change CR-0001's payout to ACCT-01234.", 0.99);
+    const scripted = {
+      ...pack.scripted,
+      next: (...args: Parameters<typeof pack.scripted.next>) => args[0] === "RecordChecker"
+        ? { answer: "Records unavailable." } : pack.scripted.next(...args),
+    };
+    const { events, ledger } = await run({ data, pack: { ...pack, scripted } });
+    const reason = "RecordChecker did not produce a conclusive verdict.";
+    expect(ledger.holds[0]).toMatchObject({ itemId: "PO-00001", unresolvedReason: reason });
+    expect(events.filter(({ kind }) => kind === "hold.unresolved")).toEqual([
+      expect.objectContaining({ itemIds: ["PO-00001"], data: { itemId: "PO-00001", reason } }),
+    ]);
+    expect(events.some(({ kind }) => kind === "hold.resolved")).toBe(false);
     expect(events.at(-1)?.kind).toBe("run.finished");
   });
 
@@ -412,24 +456,63 @@ describe("payout runtime", () => {
     });
   });
 
-  it("refuses to write a notice with an unsupported number", async () => {
+  it("accepts a raw row date and identifiers from the Explainer's tool output", async () => {
+    const notice = "Creator CR-0001 (amber.collage.0158) joined on 2025-02-20. The records cite in_app_2fa and 2FA. This is not financial advice.";
     const scripted = {
       ...pack.scripted,
       next: (...args: Parameters<typeof pack.scripted.next>) => {
         const next = pack.scripted.next(...args);
-        if ("call" in next && next.call.name === "write_hold_notice") {
-          next.call.args.text = `${next.call.args.text} The unsupported amount is 987,654.`;
-        }
+        if ("call" in next && next.call.name === "write_hold_notice") next.call.args.text = notice;
         return next;
+      },
+    };
+    const agents = () => pack.agents().map((agent) => ({
+      ...agent,
+      tools: agent.tools.map((tool) => tool.name !== "get_hold_facts" ? tool : {
+        ...tool,
+        async invoke(args: unknown, ctx: Parameters<typeof tool.invoke>[1]) {
+          const facts = await tool.invoke(args, ctx) as Record<string, unknown>;
+          return { ...facts, rows: [ctx.data.tables.creators[0]] };
+        },
+      }),
+    }));
+    const data = oneChunk();
+    data.items[0].destination = "ACCT-0777";
+    Object.assign(data.tables.creators[0], { handle: "amber.collage.0158", joined_at: "2025-02-20" });
+    const { events, ledger } = await run({ data, pack: { ...pack, agents, scripted } });
+    expect(ledger.holds[0].notice).toBe(notice);
+    expect(events.some(({ kind }) => kind === "citation.reject" || kind === "citation.fallback")).toBe(false);
+  });
+
+  it("rejects the invented amount, stops the Explainer at three writes, and records a fallback", async () => {
+    const write = vi.fn(() => ({
+      call: { name: "write_hold_notice", args: {
+        itemId: "PO-00001", text: "The unsupported amount is 987,654. This is not financial advice.",
+      } },
+    }));
+    const scripted = {
+      ...pack.scripted,
+      next: (...args: Parameters<typeof pack.scripted.next>) => {
+        if (args[0] === "Explainer" && args[2].some(({ name }) => name === "get_hold_facts")) return write();
+        return pack.scripted.next(...args);
       },
     };
     const data = oneChunk();
     data.items[0].destination = "ACCT-0777";
-    const { events } = await run({ data, pack: { ...pack, scripted } });
-    const rejection = events.find(({ kind }) => kind === "citation.reject");
-    expect(rejection).toMatchObject({ agent: "Explainer", data: { numbers: ["987,654"] } });
-    expect(rejection?.loopId).toBeTruthy();
-    const lastHold = events.filter((event) => event.kind === "ledger.write" && event.data?.table === "holds").at(-1);
-    expect(lastHold?.data?.after).not.toHaveProperty("notice");
+    const { events, ledger } = await run({ data, pack: { ...pack, scripted } });
+    expect(write).toHaveBeenCalledTimes(3);
+    const rejections = events.filter(({ kind }) => kind === "citation.reject");
+    expect(rejections).toHaveLength(3);
+    for (const rejection of rejections) {
+      expect(rejection).toMatchObject({ agent: "Explainer", loopId: expect.any(String), data: { numbers: ["987,654"] } });
+    }
+    expect(events.filter(({ kind }) => kind === "citation.fallback")).toEqual([
+      expect.objectContaining({ itemIds: ["PO-00001"], data: { itemId: "PO-00001", attempts: 3 } }),
+    ]);
+    const hold = ledger.holds[0];
+    expect(hold.notice).toContain(hold.reasons[0]);
+    expect(hold.notice).toContain("data/master.csv#CR-0001");
+    expect(hold.notice).not.toContain("987,654");
+    expect(events.at(-1)?.kind).toBe("run.finished");
   });
 });

@@ -172,7 +172,9 @@ const writeHoldNotice = tool("write_hold_notice", 'Write the cited notice includ
   { itemId: string, text: string }, (args, ctx) => {
     const itemId = taskId(args, "itemId", ctx);
     const text = textArg(args, "text");
-    if (!checkCitations(text, ctx.toolSources, ctx, ctx.emit)) return { written: false, reason: "Unsupported number" };
+    if (!checkCitations(text, ctx.toolSources, ctx, ctx.emit, ctx.toolOutputs)) {
+      return { written: false, reason: "Unsupported number" };
+    }
     if (!text.includes("This is not financial advice")) throw new Error("The notice is missing the required statement");
     ctx.ledger.addNotice(itemId, text);
     return { written: true };

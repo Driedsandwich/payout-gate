@@ -114,22 +114,70 @@ export function createGate(options: GateOptions) {
     return released;
   }
 
-  function resolveTimeoutHolds(): void {
+  function timeoutReviews() {
     const reviewedAt = nowMs();
-    const unread = new Set(ledger.untriagedAt(reviewedAt).map(({ id }) => id));
-    for (const [itemId, { chunkId, arrivals }] of timeoutHolds) {
+    return [...timeoutHolds].map(([itemId, { chunkId, arrivals }]) => {
       const { verdicts, missing, suspicious } = evidence(itemId, reviewedAt);
-      if (suspicious.length) {
+      const triage = arrivals.map((id) => ({ id, row: ledger.triageFor(id) }));
+      return {
+        itemId, chunkId, verdicts, missing, suspicious, revision: ledger.revisionAt(itemId, reviewedAt),
+        unread: triage.filter(({ row }) => !row).map(({ id }) => id),
+        needsAudit: !suspicious.length && !ledger.scannedAt(chunkId, reviewedAt),
+        triageSources: triage.flatMap(({ row }) => row?.sources ?? []),
+      };
+    });
+  }
+
+  function resolveTimeoutHolds(): void {
+    for (const { itemId, chunkId, verdicts, missing, suspicious, unread, needsAudit, triageSources } of timeoutReviews()) {
+      const reasons = [
+        ...unread.map((id) => `Inbox triage did not complete for ${id}.`),
+        ...missing.map((by) => `${by} did not produce a conclusive verdict.`),
+        ...(needsAudit ? [`Batch audit did not complete for ${chunkId}.`] : []),
+      ];
+      if (reasons.length) {
+        ledger.markHoldUnresolved(itemId, reasons.join(" "));
+      } else if (suspicious.length) {
         ledger.resolveHold(itemId, { ...verdictHold(suspicious), outcome: "confirmed", notice: undefined });
-      } else if (!missing.length && ledger.scannedAt(chunkId, reviewedAt) && arrivals.every((id) => !unread.has(id))) {
+      } else {
         ledger.resolveHold(itemId, {
           outcome: "cleared_late",
           reasons: ["cleared after cut-off"],
-          sources: uniqueSources([...ledger.item(itemId).sources, ...verdicts.flatMap((v) => v.sources)]),
+          sources: uniqueSources([
+            ...ledger.item(itemId).sources, ...ledger.holdFor(itemId)!.sources, ...triageSources,
+            ...verdicts.flatMap((v) => v.sources),
+          ]),
           notice: "Your payout was cleared after cut-off and paid late. This is not financial advice.",
         });
       }
     }
+  }
+
+  async function explainHold(itemId: string, run: (handler: InterceptionHandler) => Promise<void>): Promise<void> {
+    const maxAttempts = 3;
+    let attempts = 0;
+    await run({
+      isSatisfiedBy(transition) {
+        if (transition.nextStateId === "function_call" && transition.input.call.name === "write_hold_notice") {
+          attempts++;
+        }
+        return attempts >= maxAttempts &&
+          (transition.nextStateId === "inference" || transition.nextStateId === "inference_streaming");
+      },
+      async handle() {
+        return holdAnswer("Hold notice review complete.");
+      },
+    });
+    const hold = ledger.holdFor(itemId);
+    if (!hold || hold.notice !== undefined) return;
+    const references = [...new Set(hold.sources.map(({ source }) => source))];
+    const evidence = references.length ? ` Source rows: ${references.join(", ")}.` : "";
+    const notice = `This item is on hold. ${hold.reasons.join(" ")}${evidence} This is not financial advice.`;
+    ledger.addNotice(itemId, notice, options.roles.dispatcher);
+    emit({
+      kind: "citation.fallback", agent: options.roles.dispatcher, itemIds: [itemId],
+      data: { itemId, attempts }, sources: hold.sources,
+    });
   }
 
   function settle(chunk: Chunk, loopId?: string): Promise<string[]> {
@@ -171,5 +219,5 @@ export function createGate(options: GateOptions) {
     };
   }
 
-  return { handler, settle, resolveTimeoutHolds, hasCall: (chunkId: string) => intercepted.has(chunkId) };
+  return { handler, settle, timeoutReviews, resolveTimeoutHolds, explainHold, hasCall: (chunkId: string) => intercepted.has(chunkId) };
 }
