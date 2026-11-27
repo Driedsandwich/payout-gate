@@ -9,10 +9,9 @@ export function readRequest(arrival: Arrival) {
   const accounts = [...arrival.body.matchAll(accountPattern)];
   const destination = arrival.body.match(/\b(?:to|use|as)\s+(?:account\s+)?(ACCT-\d{4,5})\b/i)?.[1];
   const requestedAccount = (destination ?? accounts.at(-1)?.[0])?.toUpperCase();
-  const relevant = /\b(?:payout|payment|transfer|bank|account|destination)\b/i.test(arrival.body);
-  const change = /\b(?:chang\w*|updat\w*|switch\w*|replac\w*|redirect\w*|rerout\w*|use|set|send)\b/i.test(arrival.body);
   return {
-    actionable: Boolean(requestedAccount && relevant && change),
+    // A message that names an account reference is never triaged as no-action.
+    actionable: Boolean(requestedAccount),
     requestedAccount,
     sources: [
       ...arrival.sources,

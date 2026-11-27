@@ -88,7 +88,7 @@ npm ci
 npm run demo                 # keyless, scripted, payouts, concurrent
 npm run demo:sequential      # same agents, one loop at a time
 npm run demo:pledge          # second scenario
-npm test                     # 114 tests at the time of writing
+npm test                     # 118 tests at the time of writing
 ```
 
 `npm run demo` prints the released and held counts and the run folder (`summary.json`, `events.jsonl`); the scripted payouts demo releases 392 of 400 and holds the 8 planted takeovers.
@@ -130,6 +130,7 @@ An AI agent about to pay a batch can ask the gate first (MCP = Model Context Pro
 - A model can fail to finish reading a message before the cut-off; the gate then holds the named creator's payout and says why.
 - The citation check is strict and can refuse a correct number the model derived itself; the notice is then written by code from the sources.
 - Scripted think time is simulated; only the live runs support claims about time.
+- A message that names an account reference is never triaged as not actionable, on the scripted path or the model's tool path; it reaches both checkers only when it can be linked to exactly one creator, otherwise it stays unread. Each message is checked against one account: the one after "to", "use" or "as", or else the last one it names. A message that asks for a change without naming any account is still recorded as not actionable.
 
 ## How it was built
 
